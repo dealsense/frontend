@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+:root {
+  --bg-base:   #0f0f0f;
+  --bg-card:   #1a1a1a;
+  --bg-card2:  #222222;
+  --border:    #2a2a2a;
+  --text-1:    #ffffff;
+  --text-2:    #9ca3af;
+  --green:     #3ddc84;
+  --green-dim: rgba(61,220,132,0.15);
+  --blue:      #60a5fa;
+  --amber:     #fbbf24;
+  --red:       #f87171;
+}
+
+@theme inline {
+  --color-background: var(--bg-base);
+  --color-foreground: var(--text-1);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-1);
+  font-family: var(--font-sans), Arial, sans-serif;
+}
+
+/* Glowing score ring */
+.score-ring-track  { stroke: #2a2a2a; }
+.score-ring-fill   { filter: drop-shadow(0 0 10px var(--green)) drop-shadow(0 0 4px var(--green)); }
+.score-ring-fill-b { filter: drop-shadow(0 0 10px var(--blue)) drop-shadow(0 0 4px var(--blue)); stroke: var(--blue); }
+.score-ring-fill-c { filter: drop-shadow(0 0 10px var(--amber)) drop-shadow(0 0 4px var(--amber)); stroke: var(--amber); }
+.score-ring-fill-d { filter: drop-shadow(0 0 10px var(--red)) drop-shadow(0 0 4px var(--red)); stroke: var(--red); }
+
+/* DS card */
+.ds-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+
+/* Green pill button */
+.ds-btn-green {
+  background: var(--green);
+  color: #0f0f0f;
+  font-weight: 700;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  transition: opacity 0.15s;
+}
+.ds-btn-green:hover { opacity: 0.85; }
+
+/* AI insight bar */
+.ai-insight-bar {
+  background: linear-gradient(90deg, rgba(74,222,128,0.15) 0%, rgba(74,222,128,0.05) 100%);
+  border: 1px solid rgba(74,222,128,0.3);
+  border-radius: 0.5rem;
+  color: var(--green);
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.625rem 1rem;
+}
