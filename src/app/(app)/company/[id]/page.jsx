@@ -156,6 +156,31 @@ function InsightBox({ data }) {
   );
 }
 
+// ── Problem / Solution ─────────────────────────────────────────────────────────
+
+function ProblemSolutionTile({ company }) {
+  const problem  = company?.problem_statement;
+  const solution = company?.solution_description;
+  if (!problem && !solution) return null;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <Tile>
+        <TileLabel>Problem</TileLabel>
+        <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>
+          {problem || "Not specified in deck"}
+        </p>
+      </Tile>
+      <Tile>
+        <TileLabel>Solution</TileLabel>
+        <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>
+          {solution || "Not specified in deck"}
+        </p>
+      </Tile>
+    </div>
+  );
+}
+
 // ── Revenue Bar Chart ──────────────────────────────────────────────────────────
 
 function RevenueChart({ traction }) {
@@ -883,13 +908,16 @@ export default function CompanyPage() {
               </div>
             </div>
 
-            {/* 2-3 line company overview */}
-            {(co.short_description || co.tagline || co.mission_statement) && (
-              <p className="text-sm mt-1.5 leading-relaxed max-w-2xl"
+            {/* Company overview — tagline + description shown together, not just the first that exists */}
+            {co.tagline && (
+              <p className="text-sm font-medium mt-1.5 max-w-2xl" style={{ color: "var(--text-1)" }}>
+                {co.tagline}
+              </p>
+            )}
+            {(co.short_description || co.mission_statement) && (
+              <p className="text-sm mt-1 leading-relaxed max-w-2xl"
                 style={{ color: "#9ca3af" }}>
-                {co.short_description
-                  || co.tagline
-                  || co.mission_statement}
+                {co.short_description || co.mission_statement}
               </p>
             )}
 
@@ -939,6 +967,9 @@ export default function CompanyPage() {
 
         {/* Insight box — strengths & risks */}
         <InsightBox data={data} />
+
+        {/* Problem / Solution */}
+        <ProblemSolutionTile company={co} />
 
         {/* Row 1: Key Metrics | Revenue Chart | Investment Score */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
