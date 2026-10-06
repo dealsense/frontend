@@ -1,19 +1,36 @@
-**Overview of src folder**
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
 
-src contains four key modules
+## Getting Started
 
-1. Indexing Pipeline (indexing\_pipeline): Extracts tables, images and text from documents, chunks them, creates embeddings and stores them in Pinecone
-2. Inference Pipeline (inference\_pipeline): Performs retrieval of chunks from Pinecone, does reranking to return top\_k chunks and generates answer using LLM
-3. Evaluation Pipeline (evaluation\_pipeline): Performs answer evaluation and chunk evaluation against manually created ground truth (in S3)
-4. Streamlit App (streamlit\_ui): Contains two streamlit apps for demo purpose - 1. With indexing, 2. Without indexing
+First, run the development server:
 
-To launch streamlit app, use main.py
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
 
-Additionally src also contains the below tools
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-1. models: contains doclayout model and use\_model.py for invoking models via BXAI client
-2. config.ini: configuration file for all the above pipelines
-3. utils.py: contains helper functions used across the pipelines
-4. aws\_utils: contains helper functions for AWS S3 CRUD operations
+You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
 
-Detailed readmes are provided on the each of the above in respective folders
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
