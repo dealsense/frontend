@@ -13,12 +13,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleDemoCredentials = () => {
-    setEmail("admin@dealsense.ai");
-    setPassword("password123");
-    setError("");
-  };
-
   const validateEmail = (val) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
   };
@@ -184,26 +178,6 @@ export default function LoginPage() {
               )}
             </button>
           </form>
-
-          <div className="relative flex py-3 items-center mt-4">
-            <div className="flex-grow border-t" style={{ borderColor: "var(--border)" }}></div>
-            <span className="flex-shrink mx-4 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--border)" }}>Demo Access</span>
-            <div className="flex-grow border-t" style={{ borderColor: "var(--border)" }}></div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleDemoCredentials}
-            disabled={loading}
-            className="w-full py-2.5 rounded-lg border text-xs font-semibold tracking-wider transition-colors hover:text-white"
-            style={{
-              borderColor: "var(--border)",
-              background: "rgba(255, 255, 255, 0.02)",
-              color: "var(--text-2)"
-            }}
-          >
-            Use Demo Credentials
-          </button>
 
           <div className="mt-4 text-center">
             <p className="text-sm" style={{ color: "var(--text-2)" }}>
