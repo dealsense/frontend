@@ -25,6 +25,27 @@ function TileLabel({ children }) {
   return <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: "#6b7280" }}>{children}</p>;
 }
 
+// Content-heavy tiles (News, DD Checklist, Financials) can take real vertical space —
+// let the user collapse them instead of scrolling past. Defaults open on first view.
+function CollapsibleTile({ label, badge, defaultOpen = true, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Tile>
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between mb-3 -mt-1 -mb-1 group">
+        <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#6b7280" }}>
+          {label}{badge ? <span className="normal-case tracking-normal ml-1.5" style={{ color: "var(--green)" }}>{badge}</span> : null}
+        </p>
+        <svg className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
+          style={{ color: "#4b5563" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && children}
+    </Tile>
+  );
+}
+
 function Badge({ children, color = "gray" }) {
   const s = {
     blue:   { background: "rgba(96,165,250,0.1)",  color: "#60a5fa" },
@@ -409,7 +430,11 @@ function TeamTile({ team }) {
                   <p className="text-xs font-semibold text-white text-center leading-tight">
                     {m.name?.split(" ")[0]}
                   </p>
-                  {m.is_founder && <p className="text-xs" style={{ color: "var(--green)" }}>Founder</p>}
+                  {(m.role || m.is_founder) && (
+                    <p className="text-xs text-center leading-tight max-w-[72px]" style={{ color: "var(--green)" }}>
+                      {m.role || "Founder"}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -495,6 +520,12 @@ function CompetitorsTile({ competitors }) {
                 {c.usp_summary && (
                   <p className="text-xs leading-relaxed" style={{ color: "#9ca3af" }}>{c.usp_summary}</p>
                 )}
+                {c.our_edge_notes && (
+                  <p className="text-xs leading-relaxed mt-1.5 pt-1.5"
+                    style={{ color: "var(--green)", borderTop: "1px solid var(--border)" }}>
+                    Our edge: {c.our_edge_notes}
+                  </p>
+                )}
               </div>
             ))}
           </div>}
@@ -546,15 +577,15 @@ function ProductsTile({ products }) {
 
 // ── Financial Projections Tile ─────────────────────────────────────────────────
 
-function FinancialProjectionsTile({ financial_projections }) {
-  const projRow = (financial_projections || []).find(r => r.projections_by_year);
-  if (!projRow) return null;
+function YearlyMetricsTile({ rows, field, label }) {
+  const row = (rows || []).find(r => r[field]);
+  if (!row) return null;
 
   let yearData = {};
   try {
-    yearData = typeof projRow.projections_by_year === "string"
-      ? JSON.parse(projRow.projections_by_year)
-      : (projRow.projections_by_year || {});
+    yearData = typeof row[field] === "string"
+      ? JSON.parse(row[field])
+      : (row[field] || {});
   } catch {
     return null;
   }
@@ -568,10 +599,7 @@ function FinancialProjectionsTile({ financial_projections }) {
   if (!metrics.length) return null;
 
   return (
-    <Tile>
-      <TileLabel>
-        Financial Projections{projRow.currency_code ? ` (${projRow.currency_code})` : ""}
-      </TileLabel>
+    <CollapsibleTile label={label} badge={row.currency_code ? `(${row.currency_code})` : null}>
       <div className="overflow-x-auto">
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
           <thead>
@@ -605,8 +633,16 @@ function FinancialProjectionsTile({ financial_projections }) {
           </tbody>
         </table>
       </div>
-    </Tile>
+    </CollapsibleTile>
   );
+}
+
+function FinancialsActualsTile({ financials }) {
+  return <YearlyMetricsTile rows={financials} field="financials_by_year" label="Financials (Actuals)" />;
+}
+
+function FinancialProjectionsTile({ financial_projections }) {
+  return <YearlyMetricsTile rows={financial_projections} field="projections_by_year" label="Financial Projections" />;
 }
 
 // ── Risk Assessment Tile ───────────────────────────────────────────────────────
@@ -660,19 +696,18 @@ function NewsSection({ companyId }) {
   if (!loading && !news.length) return null;
 
   return (
-    <Tile>
-      <TileLabel>Recent News</TileLabel>
+    <CollapsibleTile label="Recent News" badge={news.length ? `${news.length}` : null}>
       {loading ? (
-        <div className="space-y-3 animate-pulse">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 animate-pulse">
           {[1,2,3].map(i => (
-            <div key={i} className="space-y-1.5">
+            <div key={i} className="space-y-1.5 p-3 rounded-lg" style={{ border: "1px solid var(--border)" }}>
               <div className="h-3.5 rounded w-3/4" style={{ background: "#2a2a2a" }} />
               <div className="h-3 rounded w-full" style={{ background: "#1e1e1e" }} />
             </div>
           ))}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {news.map((item, i) => (
             <a key={i} href={item.url} target="_blank" rel="noopener noreferrer"
               className="block p-3 rounded-lg group transition-colors"
@@ -698,7 +733,7 @@ function NewsSection({ companyId }) {
           ))}
         </div>
       )}
-    </Tile>
+    </CollapsibleTile>
   );
 }
 
@@ -740,71 +775,85 @@ function DDChecklist({ dd_checklist }) {
         <p className="text-xs mt-2" style={{ color: "#4b5563" }}>{progress}% of items reviewed</p>
       </div>
 
-      <div className="space-y-2">
-        {order.map(cat => (
-          <div key={cat} className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
-            <button onClick={() => setOpenCat(openCat === cat ? null : cat)}
-              className="w-full flex items-center justify-between px-4 py-3 text-sm transition-colors"
-              style={{ background: openCat === cat ? "var(--bg-card2)" : "" }}
-              onMouseEnter={e => { if (openCat !== cat) e.currentTarget.style.background = "var(--bg-card2)"; }}
-              onMouseLeave={e => { if (openCat !== cat) e.currentTarget.style.background = ""; }}>
-              <span className="font-semibold text-white">{cat}</span>
-              <div className="flex items-center gap-3">
-                <span className="text-xs" style={{ color: "#4b5563" }}>
-                  {grouped[cat].filter((r, i) => checked[`${cat}-${i}`]).length}/{grouped[cat].length}
-                </span>
-                <svg className={`w-4 h-4 transition-transform ${openCat === cat ? "rotate-180" : ""}`}
-                  style={{ color: "#4b5563" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
+      {/* Category grid — click a card to view its questions below */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+        {order.map(cat => {
+          const catChecked = grouped[cat].filter((r, i) => checked[`${cat}-${i}`]).length;
+          const catTotal = grouped[cat].length;
+          const catPct = catTotal > 0 ? Math.round((catChecked / catTotal) * 100) : 0;
+          const isOpen = openCat === cat;
+          return (
+            <button key={cat} onClick={() => setOpenCat(isOpen ? null : cat)}
+              className="text-left rounded-lg p-3 transition-colors"
+              style={{
+                background: isOpen ? "var(--bg-card2)" : "transparent",
+                border: `1px solid ${isOpen ? "rgba(61,220,132,0.4)" : "var(--border)"}`,
+              }}
+              onMouseEnter={e => { if (!isOpen) e.currentTarget.style.background = "var(--bg-card2)"; }}
+              onMouseLeave={e => { if (!isOpen) e.currentTarget.style.background = "transparent"; }}>
+              <p className="text-xs font-semibold text-white leading-tight mb-1.5">{cat}</p>
+              <div className="h-1.5 rounded-full overflow-hidden mb-1" style={{ background: "#1e1e1e" }}>
+                <div className="h-full" style={{
+                  width: `${catPct}%`,
+                  background: catPct < 30 ? "#f87171" : catPct < 70 ? "#fbbf24" : "var(--green)",
+                }} />
               </div>
+              <p className="text-xs" style={{ color: "#6b7280" }}>{catChecked}/{catTotal}</p>
             </button>
-            {openCat === cat && (
-              <div style={{ borderTop: "1px solid var(--border)" }}>
-                {grouped[cat].map((row, i) => {
-                  const key = `${cat}-${i}`;
-                  const isChecked = checked[key] || false;
-                  return (
-                    <div key={i} className="px-4 py-4"
-                      style={{ borderBottom: i < grouped[cat].length - 1 ? "1px solid var(--border)" : "none" }}>
-                      <div className="flex gap-3 mb-2">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={(e) => setChecked({ ...checked, [key]: e.target.checked })}
-                          className="w-5 h-5 rounded cursor-pointer accent-green-500 mt-0.5"
-                        />
-                        <div className="flex-1">
-                          <p className={`text-sm font-semibold mb-1 ${isChecked ? "line-through" : ""}`}
-                            style={{ color: isChecked ? "#4b5563" : "white" }}>
-                            {row.question}
-                          </p>
-                          <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>
-                            {row.answer || "Not available"}
-                          </p>
-                          {row.source && !["not_found","error"].includes(row.source) && (
-                            <p className="text-xs mt-1" style={{ color: "#4b5563" }}>
-                              {row.source === "extracted_data" ? "📄 From document" : "🔍 From web search"}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      {/* Notes field */}
-                      <textarea
-                        placeholder="Add notes…"
-                        value={notes[key] || ""}
-                        onChange={(e) => setNotes({ ...notes, [key]: e.target.value })}
-                        rows={notes[key] ? 2 : 1}
-                        className="w-full ml-8 mt-2 px-3 py-2 text-xs rounded-lg bg-[#0f0f0f] text-white border border-[#2a2a2a] focus:border-green-500 focus:outline-none resize-none"
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {/* Expanded category detail */}
+      {openCat && (
+        <div className="mt-3 rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+          <div className="flex items-center justify-between px-4 py-2.5" style={{ background: "var(--bg-card2)" }}>
+            <span className="font-semibold text-sm text-white">{openCat}</span>
+            <button onClick={() => setOpenCat(null)} className="text-xs" style={{ color: "#6b7280" }}>
+              Close ✕
+            </button>
+          </div>
+          {grouped[openCat].map((row, i) => {
+            const key = `${openCat}-${i}`;
+            const isChecked = checked[key] || false;
+            return (
+              <div key={i} className="px-4 py-4"
+                style={{ borderTop: "1px solid var(--border)" }}>
+                <div className="flex gap-3 mb-2">
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={(e) => setChecked({ ...checked, [key]: e.target.checked })}
+                    className="w-5 h-5 rounded cursor-pointer accent-green-500 mt-0.5"
+                  />
+                  <div className="flex-1">
+                    <p className={`text-sm font-semibold mb-1 ${isChecked ? "line-through" : ""}`}
+                      style={{ color: isChecked ? "#4b5563" : "white" }}>
+                      {row.question}
+                    </p>
+                    <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>
+                      {row.answer || "Not available"}
+                    </p>
+                    {row.source && !["not_found","error"].includes(row.source) && (
+                      <p className="text-xs mt-1" style={{ color: "#4b5563" }}>
+                        {row.source === "extracted_data" ? "📄 From document" : "🔍 From web search"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {/* Notes field — session-only (see note below); not yet saved to the backend */}
+                <textarea
+                  placeholder="Add notes… (not saved yet)"
+                  value={notes[key] || ""}
+                  onChange={(e) => setNotes({ ...notes, [key]: e.target.value })}
+                  rows={notes[key] ? 2 : 1}
+                  className="w-full ml-8 mt-2 px-3 py-2 text-xs rounded-lg bg-[#0f0f0f] text-white border border-[#2a2a2a] focus:border-green-500 focus:outline-none resize-none"
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
     </Tile>
   );
 }
@@ -895,6 +944,12 @@ export default function CompanyPage() {
           {/* Company info */}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3 flex-wrap">
+              {co.logo_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={co.logo_url} alt="" className="w-9 h-9 rounded-lg object-contain"
+                  style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}
+                  onError={(e) => { e.currentTarget.style.display = "none"; }} />
+              )}
               <h1 className="text-xl font-bold text-white">{co.name || co.brand_name || `Company #${id}`}</h1>
               <div className="flex gap-1.5 flex-wrap items-center">
                 {co.sector  && <Badge color="blue">{co.sector}</Badge>}
@@ -1008,7 +1063,8 @@ export default function CompanyPage() {
           </div>
         )}
 
-        {/* Financial Projections (only shown when data exists) */}
+        {/* Financials — actuals first, then projections (only shown when data exists) */}
+        <FinancialsActualsTile financials={data.financials} />
         <FinancialProjectionsTile financial_projections={data.financial_projections} />
 
         {/* Row 4: Investment recommendation (includes AI thesis) */}
