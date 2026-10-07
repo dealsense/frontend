@@ -738,11 +738,22 @@ function NewsSection({ companyId }) {
 }
 
 
-function DDChecklist({ dd_checklist }) {
+function DDChecklist({ dd_checklist, companyId }) {
+  const { showToast } = useToast();
   const [openCat, setOpenCat] = useState(null);
-  const [checked, setChecked] = useState({});
-  const [notes, setNotes] = useState({});
-  
+  // Keyed by checklist_id (stable backend identity) and seeded from the saved state
+  // dd_checklist already carries, so review progress persists across refreshes.
+  const [checked, setChecked] = useState(() => {
+    const init = {};
+    for (const row of dd_checklist || []) init[row.checklist_id] = !!row.is_checked;
+    return init;
+  });
+  const [notes, setNotes] = useState(() => {
+    const init = {};
+    for (const row of dd_checklist || []) init[row.checklist_id] = row.user_notes || "";
+    return init;
+  });
+
   const grouped = {}, order = [];
   for (const row of dd_checklist || []) {
     const cat = row.question_category || "General";
@@ -750,6 +761,20 @@ function DDChecklist({ dd_checklist }) {
     grouped[cat].push(row);
   }
   if (!order.length) return null;
+
+  const toggleChecked = (checklistId, value) => {
+    setChecked(prev => ({ ...prev, [checklistId]: value }));
+    api.updateDDChecklistItem(companyId, checklistId, { isChecked: value })
+      .catch(() => {
+        setChecked(prev => ({ ...prev, [checklistId]: !value })); // revert on failure
+        showToast("Couldn't save — try again", "error");
+      });
+  };
+
+  const saveNotes = (checklistId, value) => {
+    api.updateDDChecklistItem(companyId, checklistId, { notes: value })
+      .catch(() => showToast("Couldn't save note — try again", "error"));
+  };
 
   const checkedCount = Object.values(checked).filter(Boolean).length;
   const totalCount = dd_checklist.length;
@@ -778,7 +803,7 @@ function DDChecklist({ dd_checklist }) {
       {/* Category grid — click a card to view its questions below */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
         {order.map(cat => {
-          const catChecked = grouped[cat].filter((r, i) => checked[`${cat}-${i}`]).length;
+          const catChecked = grouped[cat].filter(r => checked[r.checklist_id]).length;
           const catTotal = grouped[cat].length;
           const catPct = catTotal > 0 ? Math.round((catChecked / catTotal) * 100) : 0;
           const isOpen = openCat === cat;
@@ -813,17 +838,17 @@ function DDChecklist({ dd_checklist }) {
               Close ✕
             </button>
           </div>
-          {grouped[openCat].map((row, i) => {
-            const key = `${openCat}-${i}`;
+          {grouped[openCat].map((row) => {
+            const key = row.checklist_id;
             const isChecked = checked[key] || false;
             return (
-              <div key={i} className="px-4 py-4"
+              <div key={key} className="px-4 py-4"
                 style={{ borderTop: "1px solid var(--border)" }}>
                 <div className="flex gap-3 mb-2">
                   <input
                     type="checkbox"
                     checked={isChecked}
-                    onChange={(e) => setChecked({ ...checked, [key]: e.target.checked })}
+                    onChange={(e) => toggleChecked(key, e.target.checked)}
                     className="w-5 h-5 rounded cursor-pointer accent-green-500 mt-0.5"
                   />
                   <div className="flex-1">
@@ -841,11 +866,12 @@ function DDChecklist({ dd_checklist }) {
                     )}
                   </div>
                 </div>
-                {/* Notes field — session-only (see note below); not yet saved to the backend */}
+                {/* Notes — saved to the backend on blur */}
                 <textarea
-                  placeholder="Add notes… (not saved yet)"
+                  placeholder="Add notes…"
                   value={notes[key] || ""}
                   onChange={(e) => setNotes({ ...notes, [key]: e.target.value })}
+                  onBlur={(e) => saveNotes(key, e.target.value)}
                   rows={notes[key] ? 2 : 1}
                   className="w-full ml-8 mt-2 px-3 py-2 text-xs rounded-lg bg-[#0f0f0f] text-white border border-[#2a2a2a] focus:border-green-500 focus:outline-none resize-none"
                 />
@@ -1086,7 +1112,7 @@ export default function CompanyPage() {
         <NewsSection companyId={id} />
 
         {/* DD Checklist */}
-        {data.dd_checklist?.length > 0 && <DDChecklist dd_checklist={data.dd_checklist} />}
+        {data.dd_checklist?.length > 0 && <DDChecklist dd_checklist={data.dd_checklist} companyId={id} />}
         {!data.dd_checklist?.length && (
           <Tile>
             <p className="text-sm text-center py-4" style={{ color: "#4b5563" }}>

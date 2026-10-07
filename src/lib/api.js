@@ -99,6 +99,19 @@ export const api = {
     return res.json();
   },
 
+  async updateDDChecklistItem(companyId, checklistId, { isChecked, notes } = {}) {
+    const body = {};
+    if (isChecked !== undefined) body.is_checked = isChecked;
+    if (notes !== undefined) body.user_notes = notes;
+    const res = await fetch(`${API_URL}/companies/${companyId}/dd-checklist/${checklistId}`, {
+      method: "PATCH",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error("Failed to save checklist item");
+    return res.json();
+  },
+
   async scoreCompany(id) {
     const res = await fetch(`${API_URL}/companies/${id}/score`, { method: "POST", headers: authHeaders() });
     if (!res.ok) throw new Error("Failed to compute score");
