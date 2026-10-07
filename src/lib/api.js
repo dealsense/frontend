@@ -118,10 +118,14 @@ export const api = {
     return res.json();
   },
 
-  getDDPdfUrl(id) {
-    const token = getToken();
-    const suffix = token ? `?access_token=${encodeURIComponent(token)}` : "";
-    return `${API_URL}/companies/${id}/dd-pdf${suffix}`;
+  // Mints a short-lived, single-use download link rather than embedding the full
+  // session token in the URL (which would leak into server/proxy logs and Referer
+  // headers) — call this right before opening/downloading, not once up front.
+  async getDDPdfDownloadUrl(id) {
+    const res = await fetch(`${API_URL}/companies/${id}/dd-pdf/download-token`, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Failed to get download link");
+    const { url } = await res.json();
+    return `${API_URL}${url}`;
   },
 
   async chat(message, companyId = null) {

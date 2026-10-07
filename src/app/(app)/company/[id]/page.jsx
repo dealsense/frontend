@@ -888,6 +888,7 @@ function DDChecklist({ dd_checklist, companyId }) {
 
 export default function CompanyPage() {
   const { id }  = useParams();
+  const { showToast } = useToast();
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
@@ -943,7 +944,18 @@ export default function CompanyPage() {
   );
 
   const co      = data.company;
-  const pdfUrl  = api.getDDPdfUrl(id);   // always available — PDF generates from all data
+
+  // Mint a fresh short-lived download token right before navigating, rather than
+  // embedding a long-lived one in a static href.
+  const downloadPdf = async (e) => {
+    e.preventDefault();
+    try {
+      const url = await api.getDDPdfDownloadUrl(id);
+      window.open(url, "_blank");
+    } catch {
+      showToast("Couldn't get the download link — try again", "error");
+    }
+  };
 
   const aiInsight = (() => {
     const t = (data.traction || [])[0] || {};
@@ -1030,7 +1042,7 @@ export default function CompanyPage() {
           {/* Score gauge + PDF */}
           <div className="flex items-center gap-4 shrink-0">
             <ScoreGauge score={data.score} loading={scoreLoading} />
-            <a href={pdfUrl} download
+            <a href="#" onClick={downloadPdf}
               className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl text-xs font-semibold transition-opacity hover:opacity-80"
               style={{ background: "var(--green-dim)", color: "var(--green)", border: "1px solid rgba(61,220,132,0.3)" }}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1127,7 +1139,7 @@ export default function CompanyPage() {
         <div className="ai-insight-bar flex items-center gap-2">
           <span>🤖</span>
           <span className="flex-1">{aiInsight}</span>
-          <a href={pdfUrl} download
+          <a href="#" onClick={downloadPdf}
             className="text-xs font-bold px-3 py-1 rounded-lg transition-opacity hover:opacity-80"
             style={{ background: "var(--green)", color: "#0f0f0f" }}>
             ↓ DDQ
