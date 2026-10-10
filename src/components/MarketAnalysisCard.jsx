@@ -1,92 +1,70 @@
 "use client";
 import { marketSize } from "@/lib/format";
 
-export default function MarketAnalysisCard({ company, market }) {
+export default function MarketAnalysisCard({ market }) {
   const m = market?.[0] || {};
+  const hasAny = m.tam_text || m.tam_value || m.sam_text || m.sam_value || m.som_text || m.som_value
+    || m.market_cagr_text || m.key_drivers || m.key_trends || m.positioning_summary;
+  if (!hasAny) return null;
+
+  const sizes = [
+    { label: "Total Addressable Market", text: m.tam_text, value: m.tam_value },
+    { label: "Serviceable Addressable Market", text: m.sam_text, value: m.sam_value },
+    { label: "Serviceable Obtainable Market", text: m.som_text, value: m.som_value },
+  ].filter(s => s.text || s.value);
 
   return (
     <div className="rounded-xl p-6" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-      <h3 className="text-xs font-semibold uppercase tracking-widest mb-5" style={{ color: "#6b7280" }}>Market Opportunity</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-widest mb-5" style={{ color: "#6b7280" }}>
+        Market Opportunity{m.market_region ? ` · ${m.market_region}` : ""}
+      </h3>
 
       <div className="space-y-4">
-        {/* Market Size */}
-        {m.market_size_usd && (
-          <div>
-            <p className="text-xs font-semibold mb-1" style={{ color: "#9ca3af" }}>Total Addressable Market</p>
-            <p className="text-lg font-bold text-white">{marketSize(m.market_size_usd)}</p>
-          </div>
-        )}
-
-        {/* Growth Rate */}
-        {m.market_growth_rate_pct && (
-          <div>
-            <p className="text-xs font-semibold mb-1" style={{ color: "#9ca3af" }}>Market Growth Rate</p>
-            <div className="flex items-baseline gap-2">
-              <p className="text-lg font-bold" style={{ color: m.market_growth_rate_pct > 10 ? "var(--green)" : "#60a5fa" }}>
-                {m.market_growth_rate_pct.toFixed(1)}%
-              </p>
-              <span className="text-xs" style={{ color: "#4b5563" }}>annually</span>
-            </div>
-          </div>
-        )}
-
-        {/* Market Maturity */}
-        {m.market_maturity && (
-          <div>
-            <p className="text-xs font-semibold mb-2" style={{ color: "#9ca3af" }}>Market Stage</p>
-            <div className="inline-block px-3 py-1 rounded-full text-xs font-medium"
-              style={{
-                background: m.market_maturity === "Emerging" ? "rgba(96,165,250,0.1)" :
-                           m.market_maturity === "Growing" ? "rgba(61,220,132,0.1)" : "rgba(251,191,36,0.1)",
-                color: m.market_maturity === "Emerging" ? "#60a5fa" :
-                       m.market_maturity === "Growing" ? "var(--green)" : "#fbbf24",
-              }}>
-              {m.market_maturity}
-            </div>
-          </div>
-        )}
-
-        {/* Competitive Intensity */}
-        {m.competitive_intensity && (
-          <div>
-            <p className="text-xs font-semibold mb-2" style={{ color: "#9ca3af" }}>Competitive Landscape</p>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#1e1e1e" }}>
-                <div className="h-full" style={{
-                  width: m.competitive_intensity === "Low" ? "33%" :
-                         m.competitive_intensity === "Medium" ? "66%" : "100%",
-                  background: m.competitive_intensity === "Low" ? "var(--green)" :
-                             m.competitive_intensity === "Medium" ? "#fbbf24" : "#f87171",
-                }} />
+        {sizes.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {sizes.map((s, i) => (
+              <div key={i}>
+                <p className="text-xs font-semibold mb-1" style={{ color: "#9ca3af" }}>{s.label}</p>
+                <p className="text-lg font-bold text-white">{marketSize(s.text, s.value, "")}</p>
               </div>
-              <span className="text-xs font-bold w-16">{m.competitive_intensity}</span>
-            </div>
+            ))}
           </div>
         )}
 
-        {/* Key Insights */}
-        <div className="pt-3 border-t border-[#2a2a2a]">
-          <ul className="space-y-2 text-xs" style={{ color: "#9ca3af" }}>
-            {company?.industry && (
-              <li className="flex gap-2">
-                <span style={{ color: "var(--green)" }}>›</span>
-                <span><strong>Industry:</strong> {company.industry}</span>
-              </li>
+        {m.market_cagr_text && (
+          <div>
+            <p className="text-xs font-semibold mb-1" style={{ color: "#9ca3af" }}>Growth</p>
+            <p className="text-sm" style={{ color: "white" }}>{m.market_cagr_text}</p>
+          </div>
+        )}
+
+        {m.positioning_summary && (
+          <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+            <p className="text-xs font-semibold mb-1" style={{ color: "#9ca3af" }}>Positioning</p>
+            <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>{m.positioning_summary}</p>
+          </div>
+        )}
+
+        {(m.key_drivers || m.key_trends) && (
+          <div className="pt-3 space-y-2" style={{ borderTop: "1px solid var(--border)" }}>
+            {m.key_drivers && (
+              <div className="flex gap-2 text-xs">
+                <span className="shrink-0" style={{ color: "var(--green)" }}>›</span>
+                <span style={{ color: "#9ca3af" }}><strong style={{ color: "white" }}>Drivers: </strong>{m.key_drivers}</span>
+              </div>
             )}
-            {m.key_market_drivers && (
-              <li className="flex gap-2">
-                <span style={{ color: "var(--green)" }}>›</span>
-                <span><strong>Growth drivers:</strong> {m.key_market_drivers}</span>
-              </li>
+            {m.key_trends && (
+              <div className="flex gap-2 text-xs">
+                <span className="shrink-0" style={{ color: "var(--blue)" }}>›</span>
+                <span style={{ color: "#9ca3af" }}><strong style={{ color: "white" }}>Trends: </strong>{m.key_trends}</span>
+              </div>
             )}
-            {m.market_threats && (
-              <li className="flex gap-2">
-                <span style={{ color: "#f87171" }}>›</span>
-                <span><strong>Risks:</strong> {m.market_threats}</span>
-              </li>
-            )}
-          </ul>
-        </div>
+          </div>
+        )}
+
+        {m.sources_note && (
+          <p className="text-xs pt-1" style={{ color: "#4b5563" }}>Sources: {m.sources_note}</p>
+        )}
       </div>
     </div>
   );

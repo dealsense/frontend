@@ -100,46 +100,81 @@ function ScoreGauge({ score, loading }) {
 // ── Insight Box (Strengths + Risks) ───────────────────────────────────────────
 
 function InsightBox({ data }) {
-  const t    = (data?.traction      || [])[0] || {};
+  const tractionHistory = data?.traction || [];
+  const t    = tractionHistory[0] || {};
   const m    = (data?.market        || [])[0] || {};
   const sc   = data?.score;
   const team = data?.team || [];
+  const competitors = data?.competitors || [];
 
   const positives = [];
-  const risks     = [];
+  // Risk candidates carry a severity so the list can be ranked and capped —
+  // comparative/trend-based signals (computed from more than one data point)
+  // are weighted above single-metric threshold checks.
+  const riskCandidates = [];
+  const addRisk = (text, severity = 1) => riskCandidates.push({ text, severity });
 
   // Revenue
   if (t.net_revenue_cr >= 10)     positives.push(`Strong revenue ${cr(t.net_revenue_cr)}`);
   else if (t.net_revenue_cr >= 1) positives.push(`${cr(t.net_revenue_cr)} revenue with growth runway`);
-  else if (t.net_revenue_cr != null && t.net_revenue_cr < 0.5) risks.push("Revenue below ₹50L — early traction");
+  else if (t.net_revenue_cr != null && t.net_revenue_cr < 0.5) addRisk("Revenue below ₹50L — early traction", 1);
 
   // LTV:CAC
   if (t.ltv_cac_ratio >= 3)      positives.push(`Excellent LTV:CAC of ${t.ltv_cac_ratio}x`);
   else if (t.ltv_cac_ratio >= 2) positives.push(`Healthy LTV:CAC ratio of ${t.ltv_cac_ratio}x`);
-  else if (t.ltv_cac_ratio != null && t.ltv_cac_ratio < 1.5) risks.push(`Weak unit economics — LTV:CAC ${t.ltv_cac_ratio}x`);
+  else if (t.ltv_cac_ratio != null && t.ltv_cac_ratio < 1.5) addRisk(`Weak unit economics — LTV:CAC ${t.ltv_cac_ratio}x`, 2);
 
   // Churn
   if (t.churn_rate_pct != null && t.churn_rate_pct < 3)   positives.push(`Very low churn ${t.churn_rate_pct}%`);
-  else if (t.churn_rate_pct != null && t.churn_rate_pct > 15) risks.push(`High churn rate of ${t.churn_rate_pct}%`);
-  else if (t.churn_rate_pct != null && t.churn_rate_pct > 8)  risks.push(`Elevated churn ${t.churn_rate_pct}% needs attention`);
+  else if (t.churn_rate_pct != null && t.churn_rate_pct > 15) addRisk(`High churn rate of ${t.churn_rate_pct}%`, 2);
+  else if (t.churn_rate_pct != null && t.churn_rate_pct > 8)  addRisk(`Elevated churn ${t.churn_rate_pct}% needs attention`, 1);
 
   // Gross margin
   if (t.gross_margin_pct >= 60)   positives.push(`High gross margin ${t.gross_margin_pct}%`);
-  else if (t.gross_margin_pct != null && t.gross_margin_pct < 20) risks.push(`Low gross margin ${t.gross_margin_pct}%`);
+  else if (t.gross_margin_pct != null && t.gross_margin_pct < 20) addRisk(`Low gross margin ${t.gross_margin_pct}%`, 1);
+
+  // Growth trend — compares consecutive periods against each other (not a fixed
+  // threshold), and against the market's own CAGR when the deck states one.
+  const gmvHistory = tractionHistory
+    .map(r => r.gross_gmv_cr != null ? Number(r.gross_gmv_cr) : null)
+    .filter(v => v != null && !Number.isNaN(v));
+  if (gmvHistory.length >= 2) {
+    const latest = gmvHistory[0], prior = gmvHistory[1];
+    const yoyPct = prior > 0 ? Math.round(((latest - prior) / prior) * 100) : null;
+    if (yoyPct != null) {
+      if (yoyPct < 0) addRisk(`GMV declined ${Math.abs(yoyPct)}% year-over-year`, 3);
+      else if (m.market_cagr_value != null && yoyPct < m.market_cagr_value) {
+        addRisk(`Growing ${yoyPct}% YoY — slower than the ${m.market_cagr_value}% market CAGR`, 2);
+      } else if (yoyPct >= 50) {
+        positives.push(`GMV up ${yoyPct}% year-over-year`);
+      }
+    }
+  }
 
   // Team
   const founders = team.filter(m => m.is_founder);
   if (founders.length >= 2)  positives.push(`${founders.length} co-founders with complementary skills`);
-  else if (!team.length)     risks.push("No team data available for evaluation");
+  else if (!team.length)     addRisk("No team data available for evaluation", 2);
 
   // Market
   if (m.tam_value >= 1000)   positives.push(`Large TAM of ${marketSize(m.tam_text, m.tam_value)}`);
   if (m.market_cagr_value >= 20) positives.push(`High market growth rate ${m.market_cagr_value}%`);
 
+  // Competitive landscape — compared against how many rivals are actually documented,
+  // not just a missing/present check.
+  if (competitors.length >= 5) addRisk(`Crowded field — ${competitors.length} competitors documented`, 2);
+  else if (competitors.length === 0) addRisk("Competitive landscape not documented", 1);
+
   // Score dimensions
-  if (sc?.score_financials != null && sc.score_financials < 5) risks.push("Limited financial data provided");
-  if (!data?.dd_checklist?.length) risks.push("Due diligence checklist not yet generated");
-  if (data?.competitors?.length === 0) risks.push("Competitive landscape not documented");
+  if (sc?.score_financials != null && sc.score_financials < 5) addRisk("Limited financial data provided", 1);
+  if (!data?.dd_checklist?.length) addRisk("Due diligence checklist not yet generated", 1);
+
+  // Rank by severity (most significant first) and keep it concise — a wall of every
+  // applicable caveat is harder to act on than the handful that actually matter most.
+  const risks = riskCandidates
+    .sort((a, b) => b.severity - a.severity)
+    .slice(0, 4)
+    .map(r => r.text);
 
   // Fill if empty
   if (!positives.length) positives.push("Upload a pitch deck to generate AI-powered insights");
@@ -409,9 +444,11 @@ function RecommendationTile({ score }) {
 // ── Team Tile ──────────────────────────────────────────────────────────────────
 
 function TeamTile({ team }) {
+  const [openIdx, setOpenIdx] = useState(null);
   const founders = (team || []).filter(m => m.is_founder);
   const others   = (team || []).filter(m => !m.is_founder);
   const shown    = [...founders, ...others].slice(0, 4);
+  const open     = openIdx != null ? shown[openIdx] : null;
 
   return (
     <Tile>
@@ -421,10 +458,11 @@ function TeamTile({ team }) {
         : <>
             <div className="flex gap-3 flex-wrap mb-3">
               {shown.map((m, i) => (
-                <div key={i} className="flex flex-col items-center gap-1">
+                <button key={i} onClick={() => setOpenIdx(openIdx === i ? null : i)}
+                  className="flex flex-col items-center gap-1">
                   <div className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-base"
                     style={{ background: "var(--green-dim)", color: "var(--green)",
-                             border: "1px solid rgba(61,220,132,0.2)" }}>
+                             border: `1px solid ${openIdx === i ? "var(--green)" : "rgba(61,220,132,0.2)"}` }}>
                     {(m.name || "?")[0].toUpperCase()}
                   </div>
                   <p className="text-xs font-semibold text-white text-center leading-tight">
@@ -435,13 +473,22 @@ function TeamTile({ team }) {
                       {m.role || "Founder"}
                     </p>
                   )}
-                </div>
+                </button>
               ))}
             </div>
             {founders.length > 0 && (
-              <p className="text-xs" style={{ color: "#6b7280" }}>
+              <p className="text-xs mb-1" style={{ color: "#6b7280" }}>
                 {founders.length} Founder{founders.length > 1 ? "s" : ""} · {team?.length} total
+                {!(open?.bio || open?.education || open?.previous_experience) && shown.some(m => m.bio || m.education || m.previous_experience) && " · click a name for background"}
               </p>
+            )}
+            {open && (open.bio || open.education || open.previous_experience) && (
+              <div className="mt-2 p-3 rounded-lg text-xs space-y-1.5" style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                <p className="font-semibold text-white">{open.name}{open.role ? ` — ${open.role}` : ""}</p>
+                {open.education && <p style={{ color: "#9ca3af" }}><span style={{ color: "#6b7280" }}>Education: </span>{open.education}</p>}
+                {open.previous_experience && <p style={{ color: "#9ca3af" }}><span style={{ color: "#6b7280" }}>Background: </span>{open.previous_experience}</p>}
+                {open.bio && <p style={{ color: "#9ca3af" }}>{open.bio}</p>}
+              </div>
             )}
           </>}
     </Tile>
@@ -500,11 +547,10 @@ function FundingTile({ fundraise_rounds, investors }) {
 
 function CompetitorsTile({ competitors }) {
   return (
-    <Tile>
-      <TileLabel>Competitors{competitors?.length ? ` · ${competitors.length}` : ""}</TileLabel>
+    <CollapsibleTile label="Competitors" badge={competitors?.length ? `${competitors.length}` : null}>
       {!competitors?.length
         ? <p className="text-sm text-center py-4" style={{ color: "#4b5563" }}>No competitor data extracted.</p>
-        : <div className="space-y-2.5">
+        : <div className="space-y-2.5 overflow-y-auto pr-1" style={{ maxHeight: "360px" }}>
             {competitors.map((c, i) => (
               <div key={i} className="rounded-lg p-3"
                 style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
@@ -529,7 +575,7 @@ function CompetitorsTile({ competitors }) {
               </div>
             ))}
           </div>}
-    </Tile>
+    </CollapsibleTile>
   );
 }
 
@@ -538,9 +584,8 @@ function CompetitorsTile({ competitors }) {
 function ProductsTile({ products }) {
   if (!products?.length) return null;
   return (
-    <Tile>
-      <TileLabel>Products / SKUs · {products.length}</TileLabel>
-      <div className="space-y-0">
+    <CollapsibleTile label="Products / SKUs" badge={`${products.length}`}>
+      <div className="space-y-0 overflow-y-auto pr-1" style={{ maxHeight: "360px" }}>
         {products.map((p, i) => (
           <div key={i} className="flex items-center justify-between py-2.5"
             style={{ borderBottom: i < products.length - 1 ? "1px solid var(--border)" : "none" }}>
@@ -571,23 +616,40 @@ function ProductsTile({ products }) {
           </div>
         ))}
       </div>
-    </Tile>
+    </CollapsibleTile>
   );
 }
 
 // ── Financial Projections Tile ─────────────────────────────────────────────────
 
-function YearlyMetricsTile({ rows, field, label }) {
-  const row = (rows || []).find(r => r[field]);
-  if (!row) return null;
-
-  let yearData = {};
+function _parseYearData(row, field) {
+  if (!row) return {};
   try {
-    yearData = typeof row[field] === "string"
-      ? JSON.parse(row[field])
-      : (row[field] || {});
+    const parsed = typeof row[field] === "string" ? JSON.parse(row[field]) : (row[field] || {});
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
-    return null;
+    return {};
+  }
+}
+
+// Actuals and projections are extracted into separate tables, but a deck's GMV/revenue
+// chart is usually one continuous timeline (e.g. FY21-22..FY23-24 actual, FY24-25
+// labeled as a projection by the extractor even when it's really just the current
+// year) — showing them as two separate tiles both labeled "GMV" reads as a duplicate.
+// Merge into one table, year-sorted, with projected years marked.
+function FinancialsTile({ financials, financial_projections }) {
+  const actualsRow = (financials || []).find(r => r.financials_by_year);
+  const projRow    = (financial_projections || []).find(r => r.projections_by_year);
+  const actuals    = _parseYearData(actualsRow, "financials_by_year");
+  const projected  = _parseYearData(projRow, "projections_by_year");
+
+  const yearData = { ...actuals };
+  const projectedYears = new Set();
+  for (const [y, v] of Object.entries(projected)) {
+    if (!(y in yearData)) {
+      yearData[y] = v;
+      projectedYears.add(y);
+    }
   }
 
   const years = Object.keys(yearData).sort();
@@ -598,8 +660,10 @@ function YearlyMetricsTile({ rows, field, label }) {
   const metrics = Array.from(allKeys);
   if (!metrics.length) return null;
 
+  const currency = actualsRow?.currency_code || projRow?.currency_code;
+
   return (
-    <CollapsibleTile label={label} badge={row.currency_code ? `(${row.currency_code})` : null}>
+    <CollapsibleTile label="Financials" badge={currency ? `(${currency})` : null}>
       <div className="overflow-x-auto">
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
           <thead>
@@ -610,7 +674,7 @@ function YearlyMetricsTile({ rows, field, label }) {
               {years.map(y => (
                 <th key={y} className="text-right pb-2 px-3 font-bold"
                   style={{ color: "var(--green)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>
-                  {y}
+                  {y}{projectedYears.has(y) ? <span className="font-normal" style={{ color: "#6b7280" }}> (proj.)</span> : ""}
                 </th>
               ))}
             </tr>
@@ -635,14 +699,6 @@ function YearlyMetricsTile({ rows, field, label }) {
       </div>
     </CollapsibleTile>
   );
-}
-
-function FinancialsActualsTile({ financials }) {
-  return <YearlyMetricsTile rows={financials} field="financials_by_year" label="Financials (Actuals)" />;
-}
-
-function FinancialProjectionsTile({ financial_projections }) {
-  return <YearlyMetricsTile rows={financial_projections} field="projections_by_year" label="Financial Projections" />;
 }
 
 // ── Risk Assessment Tile ───────────────────────────────────────────────────────
@@ -1016,7 +1072,8 @@ export default function CompanyPage() {
 
             <div className="flex items-center gap-3 mt-2 flex-wrap">
               {co.website_url && (
-                <a href={co.website_url} target="_blank" rel="noopener noreferrer"
+                <a href={/^https?:\/\//i.test(co.website_url) ? co.website_url : `https://${co.website_url}`}
+                  target="_blank" rel="noopener noreferrer"
                   className="text-xs hover:underline flex items-center gap-1"
                   style={{ color: "var(--green)" }}>
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1084,7 +1141,7 @@ export default function CompanyPage() {
         </div>
 
         {/* Market Analysis */}
-        <MarketAnalysisCard company={data.company} market={data.market} />
+        <MarketAnalysisCard market={data.market} />
 
         {/* Row 2: Team | Funding | Risk */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -1101,9 +1158,8 @@ export default function CompanyPage() {
           </div>
         )}
 
-        {/* Financials — actuals first, then projections (only shown when data exists) */}
-        <FinancialsActualsTile financials={data.financials} />
-        <FinancialProjectionsTile financial_projections={data.financial_projections} />
+        {/* Financials — actuals + projections merged into one year-sorted table */}
+        <FinancialsTile financials={data.financials} financial_projections={data.financial_projections} />
 
         {/* Row 4: Investment recommendation (includes AI thesis) */}
         {data.score && <RecommendationTile score={data.score} />}
