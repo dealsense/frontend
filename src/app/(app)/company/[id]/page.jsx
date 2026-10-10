@@ -243,27 +243,44 @@ function RevenueChart({ traction }) {
   const rows = [...(traction || [])].reverse().slice(0, 7);
   if (!rows.length) return <p className="text-sm py-8 text-center" style={{ color: "#4b5563" }}>No revenue data.</p>;
 
-  const vals  = rows.map(r => Number(r.net_revenue_cr || 0));
-  const maxV  = Math.max(...vals, 0.1);
-  const trend = vals.length > 1 && vals[vals.length - 1] > vals[0];
+  // Revenue isn't always extracted even when GMV is (common for marketplaces/early-stage
+  // decks that lead with GMV) — falling back to all-zero and calling that "declining" is
+  // actively misleading. Use whichever metric actually has real (non-null) values.
+  const hasRevenue = rows.some(r => r.net_revenue_cr != null);
+  const metricKey  = hasRevenue ? "net_revenue_cr" : "gross_gmv_cr";
+  const metricLabel = hasRevenue ? "Revenue" : "GMV";
+
+  const vals = rows.map(r => r[metricKey] != null ? Number(r[metricKey]) : null);
+  if (vals.every(v => v == null)) {
+    return <p className="text-sm py-8 text-center" style={{ color: "#4b5563" }}>No revenue or GMV data.</p>;
+  }
+  const knownVals = vals.filter(v => v != null);
+  const maxV  = Math.max(...knownVals, 0.1);
+  const first = vals.find(v => v != null);
+  const last  = [...vals].reverse().find(v => v != null);
+  const hasVariation = knownVals.length > 1 && first !== last;
+  const trend = hasVariation && last > first;
 
   return (
     <div>
       <div className="flex items-end gap-1.5 h-28 mb-2">
         {rows.map((r, i) => {
-          const h   = Math.max((vals[i] / maxV) * 100, 3);
-          const pct = vals.length > 1 ? ((vals[i] - vals[0]) / (vals[0] || 1)) * 100 : 0;
+          const v = vals[i];
+          const h = v != null ? Math.max((v / maxV) * 100, 3) : 0;
+          const pct = v != null && first ? ((v - first) / first) * 100 : 0;
           return (
             <div key={i} className="flex-1 flex flex-col items-center gap-1 group relative">
               <div className="absolute -top-7 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity
                 text-xs px-2 py-0.5 rounded whitespace-nowrap z-10"
                 style={{ background: "var(--bg-card2)", color: "var(--green)", border: "1px solid var(--border)" }}>
-                ₹{vals[i]}Cr{i > 0 && pct !== 0 ? ` (${pct > 0 ? "+" : ""}${pct.toFixed(0)}%)` : ""}
+                {v != null ? `₹${v}Cr${i > 0 && pct !== 0 ? ` (${pct > 0 ? "+" : ""}${pct.toFixed(0)}%)` : ""}` : "No data"}
               </div>
               <div className="w-full rounded-t transition-all"
-                style={{ height: `${h}%`,
-                  background: `linear-gradient(to top, rgba(61,220,132,0.9), rgba(61,220,132,0.3))`,
-                  boxShadow: i === vals.length - 1 ? "0 0 8px rgba(61,220,132,0.4)" : "none" }} />
+                style={{ height: v != null ? `${h}%` : "3%",
+                  background: v != null
+                    ? `linear-gradient(to top, rgba(61,220,132,0.9), rgba(61,220,132,0.3))`
+                    : "#2a2a2a",
+                  boxShadow: v != null && i === vals.length - 1 ? "0 0 8px rgba(61,220,132,0.4)" : "none" }} />
               {r.period_label && (
                 <div className="text-center truncate w-full" style={{ color: "#4b5563", fontSize: "9px" }}>
                   {r.period_label}
@@ -274,12 +291,12 @@ function RevenueChart({ traction }) {
         })}
       </div>
       <div className="flex items-center justify-between mt-1">
-        <p className="text-xs font-semibold" style={{ color: trend ? "var(--green)" : "#f87171" }}>
-          {trend ? "▲ Positive Trajectory" : "▼ Declining Revenue"}
+        <p className="text-xs font-semibold" style={{ color: !hasVariation ? "#6b7280" : trend ? "var(--green)" : "#f87171" }}>
+          {metricLabel}{!hasVariation ? " — flat / insufficient data" : trend ? ": ▲ Positive Trajectory" : ": ▼ Declining"}
         </p>
-        {vals.length > 1 && (
+        {hasVariation && (
           <p className="text-xs" style={{ color: "#4b5563" }}>
-            {(((vals[vals.length-1] - vals[0]) / (vals[0] || 1)) * 100).toFixed(0)}% overall
+            {(((last - first) / first) * 100).toFixed(0)}% overall
           </p>
         )}
       </div>
@@ -443,12 +460,13 @@ function RecommendationTile({ score }) {
 
 // ── Team Tile ──────────────────────────────────────────────────────────────────
 
-function TeamTile({ team }) {
+function TeamTile({ team, webTeam }) {
   const [openIdx, setOpenIdx] = useState(null);
   const founders = (team || []).filter(m => m.is_founder);
   const others   = (team || []).filter(m => !m.is_founder);
   const shown    = [...founders, ...others].slice(0, 4);
   const open     = openIdx != null ? shown[openIdx] : null;
+  const webMatch = open && webTeam?.members?.find(w => w.name?.toLowerCase().trim() === open.name?.toLowerCase().trim());
 
   return (
     <Tile>
@@ -479,15 +497,33 @@ function TeamTile({ team }) {
             {founders.length > 0 && (
               <p className="text-xs mb-1" style={{ color: "#6b7280" }}>
                 {founders.length} Founder{founders.length > 1 ? "s" : ""} · {team?.length} total
-                {!(open?.bio || open?.education || open?.previous_experience) && shown.some(m => m.bio || m.education || m.previous_experience) && " · click a name for background"}
+                {!open && (webTeam || shown.some(m => m.bio || m.education || m.previous_experience)) && " · click a name for background"}
               </p>
             )}
-            {open && (open.bio || open.education || open.previous_experience) && (
-              <div className="mt-2 p-3 rounded-lg text-xs space-y-1.5" style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
-                <p className="font-semibold text-white">{open.name}{open.role ? ` — ${open.role}` : ""}</p>
-                {open.education && <p style={{ color: "#9ca3af" }}><span style={{ color: "#6b7280" }}>Education: </span>{open.education}</p>}
-                {open.previous_experience && <p style={{ color: "#9ca3af" }}><span style={{ color: "#6b7280" }}>Background: </span>{open.previous_experience}</p>}
-                {open.bio && <p style={{ color: "#9ca3af" }}>{open.bio}</p>}
+            {open && (open.bio || open.education || open.previous_experience || webTeam) && (
+              <div className="mt-2 grid gap-3" style={{ gridTemplateColumns: webTeam ? "1fr 1fr" : "1fr" }}>
+                <div className="p-3 rounded-lg text-xs space-y-1.5" style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                  {webTeam && <p className="font-bold mb-1" style={{ color: "var(--green)" }}>📄 DECK</p>}
+                  <p className="font-semibold text-white">{open.name}{open.role ? ` — ${open.role}` : ""}</p>
+                  {open.education && <p style={{ color: "#9ca3af" }}><span style={{ color: "#6b7280" }}>Education: </span>{open.education}</p>}
+                  {open.previous_experience && <p style={{ color: "#9ca3af" }}><span style={{ color: "#6b7280" }}>Background: </span>{open.previous_experience}</p>}
+                  {open.bio && <p style={{ color: "#9ca3af" }}>{open.bio}</p>}
+                  {!(open.education || open.previous_experience || open.bio) && <p style={{ color: "#4b5563" }}>Not stated in deck.</p>}
+                </div>
+                {webTeam && (
+                  <div className="p-3 rounded-lg text-xs space-y-1.5" style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                    <p className="font-bold mb-1" style={{ color: "#60a5fa" }}>🌐 WEB SEARCH</p>
+                    {webMatch ? (
+                      <>
+                        {webMatch.background && <p style={{ color: "#9ca3af" }}>{webMatch.background}</p>}
+                        {webMatch.source_url && (
+                          <a href={webMatch.source_url} target="_blank" rel="noopener noreferrer"
+                            className="hover:underline block" style={{ color: "#60a5fa" }}>source ↗</a>
+                        )}
+                      </>
+                    ) : <p style={{ color: "#4b5563" }}>No match found via web search.</p>}
+                  </div>
+                )}
               </div>
             )}
           </>}
@@ -497,12 +533,12 @@ function TeamTile({ team }) {
 
 // ── Funding Tile ───────────────────────────────────────────────────────────────
 
-function FundingTile({ fundraise_rounds, investors }) {
+function FundingTile({ fundraise_rounds, investors, webFunding }) {
   const rounds = fundraise_rounds || [];
+  const webRounds = webFunding?.rounds || [];
 
-  return (
-    <Tile>
-      <TileLabel>Funding History{rounds.length > 1 ? ` · ${rounds.length} rounds` : ""}</TileLabel>
+  const deckContent = (
+    <>
       {!rounds.length
         ? <p className="text-xs mb-3" style={{ color: "#4b5563" }}>No fundraise data.</p>
         : <div className="space-y-2 mb-3">
@@ -539,42 +575,115 @@ function FundingTile({ fundraise_rounds, investors }) {
           </div>
         </div>
       )}
+    </>
+  );
+
+  return (
+    <Tile>
+      <TileLabel>Funding History{rounds.length > 1 ? ` · ${rounds.length} rounds` : ""}</TileLabel>
+      {webFunding ? (
+        <div className="grid grid-cols-1 gap-4">
+          <div>
+            <p className="text-xs font-bold mb-2" style={{ color: "var(--green)" }}>📄 FROM DECK</p>
+            {deckContent}
+          </div>
+          <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+            <p className="text-xs font-bold mb-2" style={{ color: "#60a5fa" }}>🌐 FROM WEB SEARCH</p>
+            {!webRounds.length
+              ? <p className="text-xs" style={{ color: "#4b5563" }}>No funding rounds found via web search.</p>
+              : <div className="space-y-2">
+                  {webRounds.map((r, i) => (
+                    <div key={i} className="rounded-lg p-3"
+                      style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                      <div className="flex items-start justify-between mb-1">
+                        <span className="font-bold text-sm text-white">{r.round_name || "Round"}</span>
+                        {r.amount_raised_cr != null && (
+                          <span className="text-sm font-black" style={{ color: "#60a5fa" }}>₹{r.amount_raised_cr}Cr</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {r.lead_investor_name && <span className="text-xs" style={{ color: "#9ca3af" }}>{r.lead_investor_name}</span>}
+                        {r.close_date && <span className="text-xs" style={{ color: "#4b5563" }}>{r.close_date}</span>}
+                      </div>
+                      {r.source_url && (
+                        <a href={r.source_url} target="_blank" rel="noopener noreferrer"
+                          className="text-xs hover:underline" style={{ color: "#60a5fa" }}>
+                          source ↗
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>}
+          </div>
+        </div>
+      ) : deckContent}
     </Tile>
   );
 }
 
 // ── Competitors Tile ───────────────────────────────────────────────────────────
 
-function CompetitorsTile({ competitors }) {
+function CompetitorsTile({ competitors, webCompetitors }) {
+  const webList = webCompetitors?.competitors || [];
+
+  const deckList = (
+    !competitors?.length
+      ? <p className="text-sm text-center py-4" style={{ color: "#4b5563" }}>No competitor data extracted.</p>
+      : <div className="space-y-2.5 overflow-y-auto pr-1" style={{ maxHeight: "360px" }}>
+          {competitors.map((c, i) => (
+            <div key={i} className="rounded-lg p-3"
+              style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+              <div className="flex items-start justify-between mb-1">
+                <span className="font-semibold text-sm text-white">{c.name}</span>
+                {c.category && <Badge color="gray">{c.category}</Badge>}
+              </div>
+              {c.price_positioning && (
+                <p className="text-xs mb-1" style={{ color: "#6b7280" }}>
+                  Pricing: {c.price_positioning}
+                </p>
+              )}
+              {c.usp_summary && (
+                <p className="text-xs leading-relaxed" style={{ color: "#9ca3af" }}>{c.usp_summary}</p>
+              )}
+              {c.our_edge_notes && (
+                <p className="text-xs leading-relaxed mt-1.5 pt-1.5"
+                  style={{ color: "var(--green)", borderTop: "1px solid var(--border)" }}>
+                  Our edge: {c.our_edge_notes}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+  );
+
   return (
     <CollapsibleTile label="Competitors" badge={competitors?.length ? `${competitors.length}` : null}>
-      {!competitors?.length
-        ? <p className="text-sm text-center py-4" style={{ color: "#4b5563" }}>No competitor data extracted.</p>
-        : <div className="space-y-2.5 overflow-y-auto pr-1" style={{ maxHeight: "360px" }}>
-            {competitors.map((c, i) => (
-              <div key={i} className="rounded-lg p-3"
-                style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
-                <div className="flex items-start justify-between mb-1">
-                  <span className="font-semibold text-sm text-white">{c.name}</span>
-                  {c.category && <Badge color="gray">{c.category}</Badge>}
-                </div>
-                {c.price_positioning && (
-                  <p className="text-xs mb-1" style={{ color: "#6b7280" }}>
-                    Pricing: {c.price_positioning}
-                  </p>
-                )}
-                {c.usp_summary && (
-                  <p className="text-xs leading-relaxed" style={{ color: "#9ca3af" }}>{c.usp_summary}</p>
-                )}
-                {c.our_edge_notes && (
-                  <p className="text-xs leading-relaxed mt-1.5 pt-1.5"
-                    style={{ color: "var(--green)", borderTop: "1px solid var(--border)" }}>
-                    Our edge: {c.our_edge_notes}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>}
+      {webCompetitors ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs font-bold mb-2" style={{ color: "var(--green)" }}>📄 FROM DECK</p>
+            {deckList}
+          </div>
+          <div>
+            <p className="text-xs font-bold mb-2" style={{ color: "#60a5fa" }}>🌐 FROM WEB SEARCH</p>
+            {!webList.length
+              ? <p className="text-sm" style={{ color: "#4b5563" }}>None found via web search.</p>
+              : <div className="space-y-2.5 overflow-y-auto pr-1" style={{ maxHeight: "360px" }}>
+                  {webList.map((c, i) => (
+                    <div key={i} className="rounded-lg p-3"
+                      style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                      <span className="font-semibold text-sm text-white">{c.name}</span>
+                      {c.notes && <p className="text-xs leading-relaxed mt-0.5" style={{ color: "#9ca3af" }}>{c.notes}</p>}
+                      {c.source_url && (
+                        <a href={c.source_url} target="_blank" rel="noopener noreferrer"
+                          className="text-xs hover:underline block mt-1" style={{ color: "#60a5fa" }}>source ↗</a>
+                      )}
+                    </div>
+                  ))}
+                </div>}
+          </div>
+        </div>
+      ) : deckList}
     </CollapsibleTile>
   );
 }
@@ -637,6 +746,64 @@ function _parseYearData(row, field) {
 // labeled as a projection by the extractor even when it's really just the current
 // year) — showing them as two separate tiles both labeled "GMV" reads as a duplicate.
 // Merge into one table, year-sorted, with projected years marked.
+const _CURRENCY_SYMBOLS = { INR: "₹", USD: "$", EUR: "€", GBP: "£" };
+
+function _formatFinMetric(key, value, symbol) {
+  if (value == null) return null;
+  const n = Number(value);
+  if (Number.isNaN(n)) return String(value);
+  if (key.endsWith("_pct")) return `${n}%`;
+  if (key.endsWith("_cr"))  return `${symbol}${n}Cr`;
+  return `${symbol}${compact(n) ?? n}`;
+}
+
+// One mini bar chart per metric (e.g. GMV, revenue) across all known years, actuals and
+// projected combined — a plain number table doesn't show the trend at a glance, which is
+// the whole point of looking at multi-year financials.
+function FinancialMetricChart({ metricKey, years, yearData, projectedYears, symbol }) {
+  const vals = years.map(y => yearData[y]?.[metricKey]);
+  const numericVals = vals.map(v => v != null ? Number(v) : null).filter(v => v != null && !Number.isNaN(v));
+  if (!numericVals.length) return null;
+  const maxV = Math.max(...numericVals, 0.0001);
+
+  return (
+    <div className="mb-4 last:mb-0">
+      <p className="text-xs font-semibold mb-2 capitalize" style={{ color: "#9ca3af" }}>
+        {metricKey.replace(/_cr$|_pct$/, "").replace(/_/g, " ")}
+      </p>
+      <div className="flex items-end gap-2 h-20">
+        {years.map((y, i) => {
+          const raw = vals[i];
+          const n = raw != null ? Number(raw) : null;
+          const h = n != null ? Math.max((n / maxV) * 100, 4) : 0;
+          return (
+            <div key={y} className="flex-1 flex flex-col items-center gap-1 group relative">
+              <div className="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity
+                text-xs px-2 py-0.5 rounded whitespace-nowrap z-10"
+                style={{ background: "var(--bg-card2)", color: "var(--green)", border: "1px solid var(--border)" }}>
+                {n != null ? _formatFinMetric(metricKey, n, symbol) : "No data"}
+              </div>
+              <div className="w-full rounded-t transition-all"
+                style={{ height: n != null ? `${h}%` : "4%",
+                  background: n != null
+                    ? (projectedYears.has(y)
+                        ? "repeating-linear-gradient(45deg, rgba(96,165,250,0.5), rgba(96,165,250,0.5) 4px, rgba(96,165,250,0.25) 4px, rgba(96,165,250,0.25) 8px)"
+                        : "linear-gradient(to top, rgba(61,220,132,0.9), rgba(61,220,132,0.3))")
+                    : "#2a2a2a" }} />
+              <p className="text-xs font-mono font-bold" style={{ color: n != null ? "white" : "#4b5563" }}>
+                {n != null ? _formatFinMetric(metricKey, n, symbol) : "—"}
+              </p>
+              <p className="text-center truncate w-full" style={{ color: "#4b5563", fontSize: "9px" }}>
+                {y}{projectedYears.has(y) ? " (proj.)" : ""}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FinancialsTile({ financials, financial_projections }) {
   const actualsRow = (financials || []).find(r => r.financials_by_year);
   const projRow    = (financial_projections || []).find(r => r.projections_by_year);
@@ -657,46 +824,31 @@ function FinancialsTile({ financials, financial_projections }) {
 
   const allKeys = new Set();
   years.forEach(y => { if (yearData[y] && typeof yearData[y] === "object") Object.keys(yearData[y]).forEach(k => allKeys.add(k)); });
-  const metrics = Array.from(allKeys);
-  if (!metrics.length) return null;
+  const metrics = Array.from(allKeys).filter(k => !k.endsWith("_pct")); // margins charted poorly as bars — keep those in a line below instead
+  const pctMetrics = Array.from(allKeys).filter(k => k.endsWith("_pct"));
+  if (!metrics.length && !pctMetrics.length) return null;
 
-  const currency = actualsRow?.currency_code || projRow?.currency_code;
+  const currency = actualsRow?.currency_code || projRow?.currency_code || "INR";
+  const symbol = _CURRENCY_SYMBOLS[currency] || `${currency} `;
 
   return (
-    <CollapsibleTile label="Financials" badge={currency ? `(${currency})` : null}>
-      <div className="overflow-x-auto">
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
-          <thead>
-            <tr>
-              <th className="text-left pb-2 pr-4 font-medium" style={{ color: "#6b7280", borderBottom: "1px solid var(--border)" }}>
-                Metric
-              </th>
-              {years.map(y => (
-                <th key={y} className="text-right pb-2 px-3 font-bold"
-                  style={{ color: "var(--green)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>
-                  {y}{projectedYears.has(y) ? <span className="font-normal" style={{ color: "#6b7280" }}> (proj.)</span> : ""}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {metrics.map((metric, mi) => (
-              <tr key={metric}>
-                <td className="py-2 pr-4 capitalize"
-                  style={{ color: "#9ca3af", borderBottom: mi < metrics.length - 1 ? "1px solid var(--border)" : "none" }}>
-                  {metric.replace(/_/g, " ")}
-                </td>
-                {years.map(y => (
-                  <td key={y} className="text-right py-2 px-3 font-mono"
-                    style={{ color: "white", borderBottom: mi < metrics.length - 1 ? "1px solid var(--border)" : "none" }}>
-                    {yearData[y]?.[metric] != null ? yearData[y][metric] : "—"}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <CollapsibleTile label="Financials" badge={`(${currency})`}>
+      {metrics.map(metric => (
+        <FinancialMetricChart key={metric} metricKey={metric} years={years} yearData={yearData}
+          projectedYears={projectedYears} symbol={symbol} />
+      ))}
+      {pctMetrics.length > 0 && (
+        <div className="pt-2 mt-1 space-y-1.5" style={{ borderTop: metrics.length ? "1px solid var(--border)" : "none" }}>
+          {pctMetrics.map(metric => (
+            <div key={metric} className="flex items-center justify-between text-xs">
+              <span className="capitalize" style={{ color: "#9ca3af" }}>{metric.replace(/_pct$/, "").replace(/_/g, " ")}</span>
+              <span className="font-mono" style={{ color: "#6b7280" }}>
+                {years.map(y => yearData[y]?.[metric] != null ? `${yearData[y][metric]}%` : "—").join("  ·  ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </CollapsibleTile>
   );
 }
@@ -940,6 +1092,37 @@ function DDChecklist({ dd_checklist, companyId }) {
   );
 }
 
+// ── Floating Chat Widget ───────────────────────────────────────────────────────
+
+function FloatingChatWidget({ companyId, title }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button onClick={() => setOpen(o => !o)}
+        aria-label={open ? "Close chat" : "Open chat"}
+        className="fixed bottom-5 right-5 z-50 w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105"
+        style={{ background: "var(--green)", color: "#0f0f0f", boxShadow: "0 4px 20px rgba(61,220,132,0.4)" }}>
+        {open ? (
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        ) : (
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+        )}
+      </button>
+      {open && (
+        <div className="fixed bottom-24 right-5 z-50 rounded-xl overflow-hidden shadow-2xl"
+          style={{ width: "380px", height: "520px", maxWidth: "calc(100vw - 2.5rem)", maxHeight: "calc(100vh - 7rem)" }}>
+          <ChatWidget companyId={companyId} title={title} />
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function CompanyPage() {
@@ -949,6 +1132,21 @@ export default function CompanyPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
   const [scoreLoading, setScoreLoading] = useState(false);
+  const [webResearch, setWebResearch] = useState(null);
+  const [researchLoading, setResearchLoading] = useState(false);
+
+  const compareWithWeb = async () => {
+    if (webResearch || researchLoading) return;
+    setResearchLoading(true);
+    try {
+      const result = await api.getWebResearch(id);
+      setWebResearch(result);
+    } catch (err) {
+      showToast(err.message || "Web research failed", "error");
+    } finally {
+      setResearchLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -1096,9 +1294,18 @@ export default function CompanyPage() {
             </div>
           </div>
 
-          {/* Score gauge + PDF */}
+          {/* Score gauge + PDF + Web research */}
           <div className="flex items-center gap-4 shrink-0">
             <ScoreGauge score={data.score} loading={scoreLoading} />
+            <button onClick={compareWithWeb} disabled={researchLoading || !!webResearch}
+              className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl text-xs font-semibold transition-opacity hover:opacity-80 disabled:opacity-60"
+              style={{ background: "rgba(96,165,250,0.1)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.3)" }}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+              </svg>
+              {researchLoading ? "Searching…" : webResearch ? "Compared" : "Compare Web"}
+            </button>
             <a href="#" onClick={downloadPdf}
               className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl text-xs font-semibold transition-opacity hover:opacity-80"
               style={{ background: "var(--green-dim)", color: "var(--green)", border: "1px solid rgba(61,220,132,0.3)" }}>
@@ -1141,19 +1348,19 @@ export default function CompanyPage() {
         </div>
 
         {/* Market Analysis */}
-        <MarketAnalysisCard market={data.market} />
+        <MarketAnalysisCard market={data.market} webData={webResearch?.market} />
 
         {/* Row 2: Team | Funding | Risk */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <TeamTile team={data.team} />
-          <FundingTile fundraise_rounds={data.fundraise_rounds} investors={data.investors} />
+          <TeamTile team={data.team} webTeam={webResearch?.team} />
+          <FundingTile fundraise_rounds={data.fundraise_rounds} investors={data.investors} webFunding={webResearch?.funding} />
           <RiskTile score={data.score} competitors={data.competitors} />
         </div>
 
         {/* Row 3: Competitors | Products */}
         {(data.competitors?.length > 0 || data.products?.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <CompetitorsTile competitors={data.competitors} />
+            <CompetitorsTile competitors={data.competitors} webCompetitors={webResearch?.competitors} />
             {data.products?.length > 0 && <ProductsTile products={data.products} />}
           </div>
         )}
@@ -1165,18 +1372,13 @@ export default function CompanyPage() {
         {data.score && <RecommendationTile score={data.score} />}
 
         {/* Pipeline Management */}
-        <PipelinePanel 
-          companyId={id} 
+        <PipelinePanel
+          companyId={id}
           initialData={data.pipeline}
         />
 
-        {/* AI Chat */}
-        <div style={{ height: "400px" }}>
-          <ChatWidget companyId={id} title={`Chat about ${co.name || 'this company'}`} />
-        </div>
-
         {/* DD Checklist */}
-        
+
         <NewsSection companyId={id} />
 
         {/* DD Checklist */}
@@ -1202,6 +1404,8 @@ export default function CompanyPage() {
           </a>
         </div>
       </div>
+
+      <FloatingChatWidget companyId={id} title={`Chat about ${co.name || 'this company'}`} />
     </div>
   );
 }

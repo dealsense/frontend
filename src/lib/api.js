@@ -99,6 +99,14 @@ export const api = {
     return res.json();
   },
 
+  // Slow (runs several live searches) and not needed on every page load — call only
+  // when the user explicitly asks to compare deck data against the web.
+  async getWebResearch(id) {
+    const res = await fetch(`${API_URL}/companies/${id}/web-research`, { headers: authHeaders(), cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to fetch web research");
+    return res.json();
+  },
+
   async updateDDChecklistItem(companyId, checklistId, { isChecked, notes } = {}) {
     const body = {};
     if (isChecked !== undefined) body.is_checked = isChecked;
