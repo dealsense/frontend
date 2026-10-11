@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 const NODE_COLOR = "rgba(61, 220, 132, 0.55)";
 const EDGE_COLOR = "61, 220, 132";
 const MAX_EDGE_DIST = 150;
-const NODE_SPEED = 0.18;
+const NODE_SPEED = 0.7;
 const AREA_PER_NODE = 11000; // lower = denser
 
 export default function AnimatedGraphBackground() {
