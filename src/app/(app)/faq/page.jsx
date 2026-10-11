@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // ── Data ───────────────────────────────────────────────────────────────────────
@@ -99,6 +99,9 @@ const SECTIONS = [
       { term: "Pre-money", full: "Pre-money Valuation",
         def: "Agreed company value before new capital enters. Post-money = Pre-money + Investment.",
         why: "Determines dilution: ₹50Cr investment at ₹200Cr pre-money = 20% new equity issued." },
+      { term: "Post-money", full: "Post-money Valuation",
+        def: "Company value immediately after the new investment is added. Post-money = Pre-money + Investment.",
+        why: "The investor's ownership % = Investment ÷ Post-money. This is the number that sets the new cap table." },
       { term: "Dilution", full: "Ownership Percentage Reduction",
         def: "When new shares are issued, existing holders' % decreases proportionally.",
         why: "Total dilution across all rounds matters. Founders should plan to retain ~20–30% at IPO." },
@@ -174,48 +177,35 @@ const SECTIONS = [
 
 // ── Components ─────────────────────────────────────────────────────────────────
 
-function TermCard({ item }) {
-  const [open, setOpen] = useState(false);
-
+// List row instead of a card — clicking expands it and collapses whichever other
+// row (in any section) was open, like a single-open accordion.
+function TermRow({ item, isOpen, onToggle }) {
   return (
-    <div onClick={() => setOpen(o => !o)}
-      className={`
-        rounded-xl cursor-pointer transition-all
-        ${open
-          ? "bg-[#1e1e1e] border-[rgba(61,220,132,0.3)] shadow-[0_0_12px_rgba(61,220,132,0.08)]"
-          : "bg-[--bg-card] border-[--border]"
-        }
-        border
-      `}
+    <div onClick={onToggle}
+      className="cursor-pointer transition-colors"
+      style={{ background: isOpen ? "#1e1e1e" : "transparent" }}
     >
-      {/* Header */}
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <span className="inline-block px-2 py-0.5 rounded text-xs font-black font-mono mb-1.5"
-              style={{ background: "var(--green-dim)", color: "var(--green)" }}>
-              {item.term}
-            </span>
-            <p className="text-sm font-semibold text-white leading-tight">{item.full}</p>
-          </div>
-          <svg
-            className={`w-4 h-4 shrink-0 mt-1 transition-transform ${open ? "rotate-180" : ""}`}
-            style={{ color: "#4b5563" }}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-
-        {/* Short definition always visible */}
-        <p className={`text-xs mt-2 leading-relaxed ${open ? "text-[#9ca3af]" : "text-[#6b7280]"}`}>
-          {item.def}
-        </p>
+      <div className="flex items-center gap-3 px-4 py-3">
+        <span className="shrink-0 inline-block px-2 py-0.5 rounded text-xs font-black font-mono"
+          style={{ background: "var(--green-dim)", color: "var(--green)" }}>
+          {item.term}
+        </span>
+        <p className="text-sm font-semibold text-white truncate flex-1 min-w-0">{item.full}</p>
+        {!isOpen && (
+          <p className="text-xs truncate hidden md:block flex-1 min-w-0" style={{ color: "#6b7280" }}>{item.def}</p>
+        )}
+        <svg
+          className={`w-4 h-4 shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          style={{ color: "#4b5563" }}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
       </div>
 
-      {/* Expanded: why it matters + badge */}
-      {open && (
-        <div className="px-4 pb-4 pt-1" style={{ borderTop: "1px solid var(--border)" }}>
+      {isOpen && (
+        <div className="px-4 pb-4">
+          <p className="text-xs leading-relaxed mb-2" style={{ color: "#9ca3af" }}>{item.def}</p>
           <p className="text-xs leading-relaxed mb-3" style={{ color: "#6b7280" }}>
             <span style={{ color: "var(--green)" }}>Why it matters — </span>
             {item.why}
@@ -239,9 +229,13 @@ function TermCard({ item }) {
 
 export default function GlossaryPage() {
   const [search, setSearch]       = useState("");
-  const [activeId, setActiveId]   = useState(SECTIONS[0].id);
+  // Section accordion: only one section's term list is visible at a time (while not
+  // searching — search shows every matching section so results aren't hidden behind
+  // a collapsed one). Term accordion: only one term row is expanded anywhere on the
+  // page, same single-open behavior one level down.
+  const [openSectionId, setOpenSectionId] = useState(SECTIONS[0].id);
+  const [openTermKey, setOpenTermKey]     = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
-  const sectionRefs               = useRef({});
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -256,10 +250,10 @@ export default function GlossaryPage() {
     })).filter(s => s.terms.length > 0);
   }, [search]);
 
-  // Scroll to section
-  const scrollTo = (id) => {
-    setActiveId(id);
-    sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const isSearching = search.trim().length > 0;
+
+  const toggleSection = (id) => {
+    setOpenSectionId(prev => (prev === id ? null : id));
   };
 
   const totalTerms = SECTIONS.reduce((n, s) => n + s.terms.length, 0);
@@ -308,10 +302,10 @@ export default function GlossaryPage() {
         <nav className="flex-1 px-2 space-y-0.5">
           {SECTIONS.map(s => {
             const count = filtered.find(f => f.id === s.id)?.terms.length ?? 0;
-            const isActive = activeId === s.id;
+            const isActive = openSectionId === s.id;
             const isHovered = hoveredId === s.id;
             return (
-              <button key={s.id} onClick={() => scrollTo(s.id)}
+              <button key={s.id} onClick={() => toggleSection(s.id)}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors text-left"
                 style={{
                   background: isActive ? "var(--green-dim)" : isHovered ? "#1e1e1e" : "transparent",
@@ -322,7 +316,7 @@ export default function GlossaryPage() {
               >
                 <span className="flex items-center gap-2 font-medium">
                   <span>{s.icon}</span>
-                  <span className="truncate">{s.title.split(" ").slice(1).join(" ")}</span>
+                  <span className="truncate">{s.title}</span>
                 </span>
                 <span className="shrink-0 text-xs" style={{ color: isActive ? "var(--green)" : "#4b5563" }}>
                   {count}
@@ -334,7 +328,7 @@ export default function GlossaryPage() {
 
         <div className="px-4 py-4 mt-auto" style={{ borderTop: "1px solid var(--border)" }}>
           <p className="text-xs" style={{ color: "#374151" }}>
-            {q ? `${shownTerms} of ${totalTerms} shown` : `${totalTerms} terms`}
+            {search ? `${shownTerms} of ${totalTerms} shown` : `${totalTerms} terms`}
           </p>
         </div>
       </aside>
@@ -350,28 +344,44 @@ export default function GlossaryPage() {
             </p>
           </div>
         ) : (
-          <div className="space-y-10">
-            {filtered.map(section => (
-              <section key={section.id} ref={el => (sectionRefs.current[section.id] = el)}>
-                {/* Section header */}
-                <div className="flex items-center gap-3 mb-4">
-                  <span className="text-xl">{section.icon}</span>
-                  <h2 className="text-base font-bold text-white">{section.title}</h2>
-                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold"
-                    style={{ background: "var(--green-dim)", color: "var(--green)" }}>
-                    {section.terms.length}
-                  </span>
-                  <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
-                </div>
+          <div className="space-y-3 max-w-4xl">
+            {filtered.map(section => {
+              const isSectionOpen = isSearching || openSectionId === section.id;
+              return (
+                <section key={section.id} className="rounded-xl overflow-hidden"
+                  style={{ border: "1px solid var(--border)", background: "var(--bg-card)" }}>
+                  {/* Section header — click to expand/collapse, closing any other open section */}
+                  <button onClick={() => toggleSection(section.id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[#1a1a1a]">
+                    <span className="text-lg">{section.icon}</span>
+                    <h2 className="text-sm font-bold text-white flex-1">{section.title}</h2>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold"
+                      style={{ background: "var(--green-dim)", color: "var(--green)" }}>
+                      {section.terms.length}
+                    </span>
+                    <svg className={`w-4 h-4 shrink-0 transition-transform ${isSectionOpen ? "rotate-180" : ""}`}
+                      style={{ color: "#4b5563" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
 
-                {/* Term cards grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {section.terms.map(item => (
-                    <TermCard key={item.term} item={item} />
-                  ))}
-                </div>
-              </section>
-            ))}
+                  {/* Term list */}
+                  {isSectionOpen && (
+                    <div style={{ borderTop: "1px solid var(--border)" }}>
+                      {section.terms.map((item, i) => {
+                        const key = `${section.id}::${item.term}`;
+                        return (
+                          <div key={item.term} style={{ borderTop: i > 0 ? "1px solid var(--border)" : "none" }}>
+                            <TermRow item={item} isOpen={openTermKey === key}
+                              onToggle={() => setOpenTermKey(prev => (prev === key ? null : key))} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
           </div>
         )}
       </main>

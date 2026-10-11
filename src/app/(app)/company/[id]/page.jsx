@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import ChatWidget from "@/components/ChatWidget";
+import FloatingChatWidget from "@/components/FloatingChatWidget";
 import PipelinePanel from "@/components/PipelinePanel";
 import InvestmentScoreCard from "@/components/InvestmentScoreCard";
 import MarketAnalysisCard from "@/components/MarketAnalysisCard";
@@ -27,11 +27,16 @@ function TileLabel({ children }) {
 
 // Content-heavy tiles (News, DD Checklist, Financials) can take real vertical space —
 // let the user collapse them instead of scrolling past. Defaults open on first view.
-function CollapsibleTile({ label, badge, defaultOpen = true, children }) {
-  const [open, setOpen] = useState(defaultOpen);
+// Controlled mode: pass `open` + `onToggle` to drive it externally (e.g. a shared
+// "collapse all" control); omit both to fall back to independent internal state.
+function CollapsibleTile({ label, badge, defaultOpen = true, open: openProp, onToggle, children }) {
+  const [openState, setOpenState] = useState(defaultOpen);
+  const isControlled = openProp !== undefined;
+  const open = isControlled ? openProp : openState;
+  const toggle = isControlled ? onToggle : () => setOpenState(o => !o);
   return (
     <Tile>
-      <button onClick={() => setOpen(o => !o)}
+      <button onClick={toggle}
         className="w-full flex items-center justify-between mb-3 -mt-1 -mb-1 group">
         <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#6b7280" }}>
           {label}{badge ? <span className="normal-case tracking-normal ml-1.5" style={{ color: "var(--green)" }}>{badge}</span> : null}
@@ -55,6 +60,44 @@ function Badge({ children, color = "gray" }) {
     amber:  { background: "rgba(251,191,36,0.1)",  color: "#fbbf24" },
   };
   return <span className="px-2.5 py-0.5 rounded-full text-xs font-medium" style={s[color] || s.gray}>{children}</span>;
+}
+
+// ── Pipeline Status Pill (compact header trigger for the full PipelinePanel) ───
+
+const PIPELINE_STATUS_META = {
+  interested:  { label: "Interested",  color: "#60a5fa" },
+  evaluating:  { label: "Evaluating",  color: "#fbbf24" },
+  negotiating: { label: "Negotiating", color: "#a78bfa" },
+  closed:      { label: "Closed",      color: "var(--green)" },
+  rejected:    { label: "Rejected",    color: "#f87171" },
+};
+
+function PipelineStatusPill({ pipeline, onClick }) {
+  const meta = PIPELINE_STATUS_META[pipeline?.status] || { label: "No status", color: "#4b5563" };
+  return (
+    <button onClick={onClick}
+      className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-opacity hover:opacity-80"
+      style={{ background: `${meta.color}15`, color: meta.color, border: `1px solid ${meta.color}40` }}>
+      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: meta.color }} />
+      {meta.label}
+    </button>
+  );
+}
+
+function PipelineModal({ companyId, initialData, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.7)" }} onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <PipelinePanel companyId={companyId} initialData={initialData} />
+        <button onClick={onClose}
+          className="w-full mt-2 py-2 text-xs font-semibold rounded-lg transition-colors"
+          style={{ border: "1px solid var(--border)", color: "#9ca3af" }}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── Score Gauge ────────────────────────────────────────────────────────────────
@@ -99,14 +142,65 @@ function ScoreGauge({ score, loading }) {
 
 // ── Insight Box (Strengths + Risks) ───────────────────────────────────────────
 
+function _parseJsonArray(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v !== "string" || !v.trim()) return [];
+  try {
+    const parsed = JSON.parse(v);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 function InsightBox({ data }) {
   const tractionHistory = data?.traction || [];
-  const t    = tractionHistory[0] || {};
+  const t    = _mostComplete(tractionHistory);
   const m    = (data?.market        || [])[0] || {};
   const sc   = data?.score;
   const team = data?.team || [];
   const competitors = data?.competitors || [];
 
+  // AI reads everything (traction, team, market, financials, fundraise, competitors)
+  // together and writes 2-4 crisp bullets each, the way an analyst actually would —
+  // this replaced the old per-metric threshold checks below, which are now only a
+  // fallback for scores computed before this existed (or if the AI call failed).
+  const aiStrengths = _parseJsonArray(sc?.ai_strengths);
+  const aiRisks = _parseJsonArray(sc?.ai_risks);
+  if (aiStrengths.length || aiRisks.length) {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-xl p-4"
+          style={{ background: "rgba(61,220,132,0.04)", border: "1px solid rgba(61,220,132,0.15)" }}>
+          <p className="text-xs font-bold mb-3 flex items-center gap-1.5" style={{ color: "var(--green)" }}>
+            <span>✅</span> STRENGTHS
+          </p>
+          <ul className="space-y-2">
+            {(aiStrengths.length ? aiStrengths : ["No clear strengths identified from available data"]).map((p, i) => (
+              <li key={i} className="text-sm flex items-start gap-2" style={{ color: "#9ca3af" }}>
+                <span className="shrink-0 mt-0.5" style={{ color: "var(--green)" }}>+</span>{p}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-xl p-4"
+          style={{ background: "rgba(248,113,113,0.04)", border: "1px solid rgba(248,113,113,0.15)" }}>
+          <p className="text-xs font-bold mb-3 flex items-center gap-1.5" style={{ color: "#f87171" }}>
+            <span>⚠️</span> RISKS
+          </p>
+          <ul className="space-y-2">
+            {(aiRisks.length ? aiRisks : ["No major risks identified from available data"]).map((r, i) => (
+              <li key={i} className="text-sm flex items-start gap-2" style={{ color: "#9ca3af" }}>
+                <span className="shrink-0 mt-0.5" style={{ color: "#f87171" }}>–</span>{r}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Fallback: rule-based heuristics (pre-AI scores, or AI call failed) ──────
   const positives = [];
   // Risk candidates carry a severity so the list can be ranked and capped —
   // comparative/trend-based signals (computed from more than one data point)
@@ -263,7 +357,7 @@ function RevenueChart({ traction }) {
 
   return (
     <div>
-      <div className="flex items-end gap-1.5 h-28 mb-2">
+      <div className="flex items-end gap-1.5 mb-2">
         {rows.map((r, i) => {
           const v = vals[i];
           const h = v != null ? Math.max((v / maxV) * 100, 3) : 0;
@@ -275,12 +369,16 @@ function RevenueChart({ traction }) {
                 style={{ background: "var(--bg-card2)", color: "var(--green)", border: "1px solid var(--border)" }}>
                 {v != null ? `₹${v}Cr${i > 0 && pct !== 0 ? ` (${pct > 0 ? "+" : ""}${pct.toFixed(0)}%)` : ""}` : "No data"}
               </div>
-              <div className="w-full rounded-t transition-all"
-                style={{ height: v != null ? `${h}%` : "3%",
-                  background: v != null
-                    ? `linear-gradient(to top, rgba(61,220,132,0.9), rgba(61,220,132,0.3))`
-                    : "#2a2a2a",
-                  boxShadow: v != null && i === vals.length - 1 ? "0 0 8px rgba(61,220,132,0.4)" : "none" }} />
+              {/* Fixed-height track so the bar's percentage height has something to resolve against —
+                  a percentage height with no sized ancestor collapses to 0. */}
+              <div className="w-full h-28 flex items-end">
+                <div className="w-full rounded-t transition-all"
+                  style={{ height: v != null ? `${h}%` : "3%",
+                    background: v != null
+                      ? `linear-gradient(to top, rgba(61,220,132,0.9), rgba(61,220,132,0.3))`
+                      : "#2a2a2a",
+                    boxShadow: v != null && i === vals.length - 1 ? "0 0 8px rgba(61,220,132,0.4)" : "none" }} />
+              </div>
               {r.period_label && (
                 <div className="text-center truncate w-full" style={{ color: "#4b5563", fontSize: "9px" }}>
                   {r.period_label}
@@ -373,87 +471,50 @@ function ScoreBars({ score }) {
 
 // ── Key Metrics ────────────────────────────────────────────────────────────────
 
-function MetricRow({ label, value, unit = "", color }) {
-  if (value == null || value === "") return null;
-  return (
-    <div className="flex justify-between items-center py-1.5"
-      style={{ borderBottom: "1px solid var(--border)" }}>
-      <span className="text-sm" style={{ color: "#6b7280" }}>{label}</span>
-      <span className="text-sm font-semibold font-mono"
-        style={{ color: color || "white" }}>{value}{unit}</span>
-    </div>
-  );
+// Multi-document uploads can produce several traction rows created within the same
+// second (one per file) — the most RECENT isn't necessarily the most complete one
+// (e.g. a file with just a commentary blurb and no numbers). Pick whichever row
+// actually has the most data instead of blindly taking index 0.
+function _mostComplete(rows) {
+  if (!rows?.length) return {};
+  return rows.reduce((best, row) => {
+    const score = r => Object.values(r || {}).filter(v => v != null && v !== "").length;
+    return score(row) > score(best) ? row : best;
+  }, rows[0]);
 }
 
 function KeyMetricsTile({ traction }) {
-  const t = (traction || [])[0] || {};
+  const t = _mostComplete(traction);
   const churnColor = t.churn_rate_pct < 5 ? "var(--green)" : t.churn_rate_pct > 15 ? "#f87171" : "#fbbf24";
   const ltvColor   = t.ltv_cac_ratio >= 3 ? "var(--green)" : t.ltv_cac_ratio >= 2 ? "#60a5fa" : "#fbbf24";
+
+  const metrics = [
+    { label: "Net Revenue",   value: cr(t.net_revenue_cr),     color: "var(--green)" },
+    { label: "GMV",           value: cr(t.gross_gmv_cr) },
+    { label: "Gross Margin",  value: t.gross_margin_pct != null ? `${t.gross_margin_pct}%` : null },
+    { label: "EBITDA Margin", value: t.ebitda_margin_pct != null ? `${t.ebitda_margin_pct}%` : null },
+    { label: "LTV:CAC",       value: t.ltv_cac_ratio != null ? `${t.ltv_cac_ratio}x` : null, color: ltvColor },
+    { label: "CAC",           value: inr(t.cac_inr) },
+    { label: "LTV",           value: inr(t.ltv_inr) },
+    { label: "Churn",         value: t.churn_rate_pct != null ? `${t.churn_rate_pct}%` : null, color: churnColor },
+    { label: "MAU",           value: compact(t.monthly_active_users) },
+    { label: "Registered",    value: compact(t.registered_users) },
+    { label: "Retention 6m",  value: t.retention_6m_pct != null ? `${t.retention_6m_pct}%` : null },
+  ].filter(m => m.value != null && m.value !== "");
 
   return (
     <Tile>
       <TileLabel>Key Metrics{t.period_label ? ` · ${t.period_label}` : ""}</TileLabel>
-      {!Object.keys(t).filter(k => t[k] != null).length
+      {!metrics.length
         ? <p className="text-sm text-center py-6" style={{ color: "#4b5563" }}>No traction data.</p>
-        : <div className="space-y-0">
-            <MetricRow label="Net Revenue"   value={cr(t.net_revenue_cr)}     color="var(--green)" />
-            <MetricRow label="GMV"           value={cr(t.gross_gmv_cr)} />
-            <MetricRow label="Gross Margin"  value={t.gross_margin_pct}       unit="%" />
-            <MetricRow label="EBITDA Margin" value={t.ebitda_margin_pct}      unit="%" />
-            <MetricRow label="LTV:CAC"       value={t.ltv_cac_ratio != null ? `${t.ltv_cac_ratio}x` : null} color={ltvColor} />
-            <MetricRow label="CAC"           value={inr(t.cac_inr)} />
-            <MetricRow label="LTV"           value={inr(t.ltv_inr)} />
-            <MetricRow label="Churn"         value={t.churn_rate_pct}         unit="%" color={churnColor} />
-            <MetricRow label="MAU"           value={compact(t.monthly_active_users)} />
-            <MetricRow label="Registered"    value={compact(t.registered_users)} />
-            <MetricRow label="Retention 6m"  value={t.retention_6m_pct}      unit="%" />
+        : <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {metrics.map(m => (
+              <div key={m.label} className="rounded-lg p-3" style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                <p className="text-xs mb-1" style={{ color: "#6b7280" }}>{m.label}</p>
+                <p className="text-base font-bold font-mono" style={{ color: m.color || "white" }}>{m.value}</p>
+              </div>
+            ))}
           </div>}
-    </Tile>
-  );
-}
-
-// ── Investment Recommendation ──────────────────────────────────────────────────
-
-function RecommendationTile({ score }) {
-  if (!score) return null;
-  const g = score.investment_grade;
-  const cfg = {
-    A: { label: "INVEST",        fg: "var(--green)", filled: true,
-         bullets: ["Strong Growth Potential","Solid Unit Economics","Proceed to Term Sheet"] },
-    B: { label: "WATCH LIST",   fg: "#60a5fa",      filled: false,
-         bullets: ["Good Fundamentals","Monitor Key KPIs","Build Conviction First"] },
-    C: { label: "NOT READY",    fg: "#fbbf24",      filled: false,
-         bullets: ["Revisit After Milestones","Validate Assumptions","Too Early to Commit"] },
-    D: { label: "DECLINE",      fg: "#f87171",      filled: false,
-         bullets: ["Weak Fundamentals","Poor Unit Economics","Not Investable Now"] },
-  }[g] || { label: "UNSCORED", fg: "#4b5563", filled: false, bullets: [] };
-
-  return (
-    <Tile>
-      <TileLabel>Investment Recommendation</TileLabel>
-      <div className="rounded-lg py-2.5 px-4 text-center font-black text-base tracking-widest mb-3"
-        style={cfg.filled
-          ? { background: cfg.fg, color: "#0f0f0f", boxShadow: `0 0 16px ${cfg.fg}40` }
-          : { border: `1.5px solid ${cfg.fg}`, color: cfg.fg, background: `${cfg.fg}10` }}>
-        {cfg.label}
-      </div>
-      <ul className="space-y-1.5 mb-3">
-        {cfg.bullets.map(b => (
-          <li key={b} className="flex items-center gap-2 text-sm" style={{ color: "#9ca3af" }}>
-            <span style={{ color: cfg.fg }}>•</span>{b}
-          </li>
-        ))}
-      </ul>
-      {score.ai_summary && (
-        <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
-          <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "#4b5563" }}>
-            AI Investment Thesis
-          </p>
-          <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>
-            {score.ai_summary}
-          </p>
-        </div>
-      )}
     </Tile>
   );
 }
@@ -623,41 +684,55 @@ function FundingTile({ fundraise_rounds, investors, webFunding }) {
 
 // ── Competitors Tile ───────────────────────────────────────────────────────────
 
-function CompetitorsTile({ competitors, webCompetitors }) {
+const LIST_PREVIEW_COUNT = 5;
+
+function CompetitorsTile({ competitors, webCompetitors, open, onToggle }) {
+  const [showAllDeck, setShowAllDeck] = useState(false);
   const webList = webCompetitors?.competitors || [];
+  const deckShown = showAllDeck ? competitors : (competitors || []).slice(0, LIST_PREVIEW_COUNT);
+  const deckHasMore = (competitors?.length || 0) > LIST_PREVIEW_COUNT;
 
   const deckList = (
     !competitors?.length
       ? <p className="text-sm text-center py-4" style={{ color: "#4b5563" }}>No competitor data extracted.</p>
-      : <div className="space-y-2.5 overflow-y-auto pr-1" style={{ maxHeight: "360px" }}>
-          {competitors.map((c, i) => (
-            <div key={i} className="rounded-lg p-3"
-              style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
-              <div className="flex items-start justify-between mb-1">
-                <span className="font-semibold text-sm text-white">{c.name}</span>
-                {c.category && <Badge color="gray">{c.category}</Badge>}
+      : <div>
+          <div className="space-y-2.5 overflow-y-auto pr-1" style={showAllDeck ? { maxHeight: "360px" } : undefined}>
+            {deckShown.map((c, i) => (
+              <div key={i} className="rounded-lg p-3"
+                style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                <div className="flex items-start justify-between mb-1">
+                  <span className="font-semibold text-sm text-white">{c.name}</span>
+                  {c.category && <Badge color="gray">{c.category}</Badge>}
+                </div>
+                {c.price_positioning && (
+                  <p className="text-xs mb-1" style={{ color: "#6b7280" }}>
+                    Pricing: {c.price_positioning}
+                  </p>
+                )}
+                {c.usp_summary && (
+                  <p className="text-xs leading-relaxed" style={{ color: "#9ca3af" }}>{c.usp_summary}</p>
+                )}
+                {c.our_edge_notes && (
+                  <p className="text-xs leading-relaxed mt-1.5 pt-1.5"
+                    style={{ color: "var(--green)", borderTop: "1px solid var(--border)" }}>
+                    Our edge: {c.our_edge_notes}
+                  </p>
+                )}
               </div>
-              {c.price_positioning && (
-                <p className="text-xs mb-1" style={{ color: "#6b7280" }}>
-                  Pricing: {c.price_positioning}
-                </p>
-              )}
-              {c.usp_summary && (
-                <p className="text-xs leading-relaxed" style={{ color: "#9ca3af" }}>{c.usp_summary}</p>
-              )}
-              {c.our_edge_notes && (
-                <p className="text-xs leading-relaxed mt-1.5 pt-1.5"
-                  style={{ color: "var(--green)", borderTop: "1px solid var(--border)" }}>
-                  Our edge: {c.our_edge_notes}
-                </p>
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
+          {deckHasMore && (
+            <button onClick={() => setShowAllDeck(s => !s)}
+              className="text-xs font-semibold mt-2.5 hover:underline" style={{ color: "var(--green)" }}>
+              {showAllDeck ? "Show fewer" : `Show all ${competitors.length}`}
+            </button>
+          )}
         </div>
   );
 
   return (
-    <CollapsibleTile label="Competitors" badge={competitors?.length ? `${competitors.length}` : null}>
+    <CollapsibleTile label="Competitors" badge={competitors?.length ? `${competitors.length}` : null}
+      open={open} onToggle={onToggle}>
       {webCompetitors ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -690,14 +765,18 @@ function CompetitorsTile({ competitors, webCompetitors }) {
 
 // ── Products Tile ──────────────────────────────────────────────────────────────
 
-function ProductsTile({ products }) {
+function ProductsTile({ products, open, onToggle }) {
+  const [showAll, setShowAll] = useState(false);
   if (!products?.length) return null;
+  const shown = showAll ? products : products.slice(0, LIST_PREVIEW_COUNT);
+  const hasMore = products.length > LIST_PREVIEW_COUNT;
+
   return (
-    <CollapsibleTile label="Products / SKUs" badge={`${products.length}`}>
-      <div className="space-y-0 overflow-y-auto pr-1" style={{ maxHeight: "360px" }}>
-        {products.map((p, i) => (
+    <CollapsibleTile label="Products / SKUs" badge={`${products.length}`} open={open} onToggle={onToggle}>
+      <div className="space-y-0 overflow-y-auto pr-1" style={showAll ? { maxHeight: "360px" } : undefined}>
+        {shown.map((p, i) => (
           <div key={i} className="flex items-center justify-between py-2.5"
-            style={{ borderBottom: i < products.length - 1 ? "1px solid var(--border)" : "none" }}>
+            style={{ borderBottom: i < shown.length - 1 ? "1px solid var(--border)" : "none" }}>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-white truncate">{p.name || p.sku_code || "—"}</p>
               <div className="flex items-center gap-2 mt-0.5">
@@ -725,7 +804,42 @@ function ProductsTile({ products }) {
           </div>
         ))}
       </div>
+      {hasMore && (
+        <button onClick={() => setShowAll(s => !s)}
+          className="text-xs font-semibold mt-2.5 hover:underline" style={{ color: "var(--green)" }}>
+          {showAll ? "Show fewer" : `Show all ${products.length}`}
+        </button>
+      )}
     </CollapsibleTile>
+  );
+}
+
+// ── Competitors + Products wrapper — one "collapse all" control for both ──────
+
+function CompetitorsAndProducts({ competitors, webCompetitors, products }) {
+  const [open, setOpen] = useState(true);
+  const hasProducts = products?.length > 0;
+  return (
+    <div>
+      {hasProducts && (
+        <div className="flex justify-end mb-1.5">
+          <button onClick={() => setOpen(o => !o)}
+            className="text-xs font-semibold hover:underline flex items-center gap-1"
+            style={{ color: "#6b7280" }}>
+            <svg className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+            {open ? "Collapse both" : "Expand both"}
+          </button>
+        </div>
+      )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <CompetitorsTile competitors={competitors} webCompetitors={webCompetitors}
+          open={hasProducts ? open : undefined} onToggle={hasProducts ? () => setOpen(o => !o) : undefined} />
+        {hasProducts && <ProductsTile products={products} open={open} onToggle={() => setOpen(o => !o)} />}
+      </div>
+    </div>
   );
 }
 
@@ -771,7 +885,7 @@ function FinancialMetricChart({ metricKey, years, yearData, projectedYears, symb
       <p className="text-xs font-semibold mb-2 capitalize" style={{ color: "#9ca3af" }}>
         {metricKey.replace(/_cr$|_pct$/, "").replace(/_/g, " ")}
       </p>
-      <div className="flex items-end gap-2 h-20">
+      <div className="flex items-end gap-2">
         {years.map((y, i) => {
           const raw = vals[i];
           const n = raw != null ? Number(raw) : null;
@@ -783,13 +897,16 @@ function FinancialMetricChart({ metricKey, years, yearData, projectedYears, symb
                 style={{ background: "var(--bg-card2)", color: "var(--green)", border: "1px solid var(--border)" }}>
                 {n != null ? _formatFinMetric(metricKey, n, symbol) : "No data"}
               </div>
-              <div className="w-full rounded-t transition-all"
-                style={{ height: n != null ? `${h}%` : "4%",
-                  background: n != null
-                    ? (projectedYears.has(y)
-                        ? "repeating-linear-gradient(45deg, rgba(96,165,250,0.5), rgba(96,165,250,0.5) 4px, rgba(96,165,250,0.25) 4px, rgba(96,165,250,0.25) 8px)"
-                        : "linear-gradient(to top, rgba(61,220,132,0.9), rgba(61,220,132,0.3))")
-                    : "#2a2a2a" }} />
+              {/* Fixed-height track so the bar's percentage height has something to resolve against. */}
+              <div className="w-full h-20 flex items-end">
+                <div className="w-full rounded-t transition-all"
+                  style={{ height: n != null ? `${h}%` : "4%",
+                    background: n != null
+                      ? (projectedYears.has(y)
+                          ? "repeating-linear-gradient(45deg, rgba(96,165,250,0.5), rgba(96,165,250,0.5) 4px, rgba(96,165,250,0.25) 4px, rgba(96,165,250,0.25) 8px)"
+                          : "linear-gradient(to top, rgba(61,220,132,0.9), rgba(61,220,132,0.3))")
+                      : "#2a2a2a" }} />
+              </div>
               <p className="text-xs font-mono font-bold" style={{ color: n != null ? "white" : "#4b5563" }}>
                 {n != null ? _formatFinMetric(metricKey, n, symbol) : "—"}
               </p>
@@ -850,38 +967,6 @@ function FinancialsTile({ financials, financial_projections }) {
         </div>
       )}
     </CollapsibleTile>
-  );
-}
-
-// ── Risk Assessment Tile ───────────────────────────────────────────────────────
-
-function RiskTile({ score, competitors }) {
-  const items = [
-    { label: "Competitive Risk", val: competitors?.length > 3 ? "High" : competitors?.length > 0 ? "Moderate" : "Low",
-      c: competitors?.length > 3 ? "#f87171" : competitors?.length > 0 ? "#fbbf24" : "var(--green)" },
-    { label: "Market Risk",     val: (score?.score_market ?? 0) < 10 ? "High" : (score?.score_market ?? 0) < 15 ? "Moderate" : "Low",
-      c: (score?.score_market ?? 0) < 10 ? "#f87171" : (score?.score_market ?? 0) < 15 ? "#fbbf24" : "var(--green)" },
-    { label: "Team Risk",       val: (score?.score_team ?? 0) < 8 ? "High" : (score?.score_team ?? 0) < 14 ? "Moderate" : "Low",
-      c: (score?.score_team ?? 0) < 8 ? "#f87171" : (score?.score_team ?? 0) < 14 ? "#fbbf24" : "var(--green)" },
-    { label: "Financial Risk",  val: (score?.score_financials ?? 0) < 5 ? "High" : (score?.score_financials ?? 0) < 10 ? "Moderate" : "Low",
-      c: (score?.score_financials ?? 0) < 5 ? "#f87171" : (score?.score_financials ?? 0) < 10 ? "#fbbf24" : "var(--green)" },
-    { label: "Product Risk",    val: "Moderate", c: "#fbbf24" },
-    { label: "Regulatory Risk", val: "Low",      c: "var(--green)" },
-  ];
-  return (
-    <Tile>
-      <TileLabel>Risk Assessment</TileLabel>
-      <ul className="space-y-2.5">
-        {items.map(({ label, val, c }) => (
-          <li key={label} className="flex items-center justify-between">
-            <span className="text-sm flex items-center gap-2" style={{ color: "#9ca3af" }}>
-              <span style={{ color: c }}>•</span>{label}
-            </span>
-            <span className="text-xs font-semibold" style={{ color: c }}>{val}</span>
-          </li>
-        ))}
-      </ul>
-    </Tile>
   );
 }
 
@@ -948,19 +1033,17 @@ function NewsSection({ companyId }) {
 
 function DDChecklist({ dd_checklist, companyId }) {
   const { showToast } = useToast();
+  const [sectionOpen, setSectionOpen] = useState(false);
   const [openCat, setOpenCat] = useState(null);
-  // Keyed by checklist_id (stable backend identity) and seeded from the saved state
-  // dd_checklist already carries, so review progress persists across refreshes.
-  const [checked, setChecked] = useState(() => {
-    const init = {};
-    for (const row of dd_checklist || []) init[row.checklist_id] = !!row.is_checked;
-    return init;
-  });
+  // Keyed by checklist_id (stable backend identity) and seeded from saved notes,
+  // so they persist across refreshes.
   const [notes, setNotes] = useState(() => {
     const init = {};
     for (const row of dd_checklist || []) init[row.checklist_id] = row.user_notes || "";
     return init;
   });
+  // Per-item save status so the Save button gives visible feedback — "idle" | "saving" | "saved"
+  const [noteStatus, setNoteStatus] = useState({});
 
   const grouped = {}, order = [];
   for (const row of dd_checklist || []) {
@@ -969,51 +1052,48 @@ function DDChecklist({ dd_checklist, companyId }) {
     grouped[cat].push(row);
   }
   if (!order.length) return null;
+  const totalCount = dd_checklist.length;
 
-  const toggleChecked = (checklistId, value) => {
-    setChecked(prev => ({ ...prev, [checklistId]: value }));
-    api.updateDDChecklistItem(companyId, checklistId, { isChecked: value })
+  const saveNotes = (checklistId) => {
+    const value = notes[checklistId] || "";
+    setNoteStatus(prev => ({ ...prev, [checklistId]: "saving" }));
+    api.updateDDChecklistItem(companyId, checklistId, { notes: value })
+      .then(() => {
+        setNoteStatus(prev => ({ ...prev, [checklistId]: "saved" }));
+        setTimeout(() => setNoteStatus(prev => ({ ...prev, [checklistId]: "idle" })), 2000);
+      })
       .catch(() => {
-        setChecked(prev => ({ ...prev, [checklistId]: !value })); // revert on failure
-        showToast("Couldn't save — try again", "error");
+        setNoteStatus(prev => ({ ...prev, [checklistId]: "idle" }));
+        showToast("Couldn't save note — try again", "error");
       });
   };
 
-  const saveNotes = (checklistId, value) => {
-    api.updateDDChecklistItem(companyId, checklistId, { notes: value })
-      .catch(() => showToast("Couldn't save note — try again", "error"));
-  };
-
-  const checkedCount = Object.values(checked).filter(Boolean).length;
-  const totalCount = dd_checklist.length;
-  const progress = totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
-
   return (
     <Tile>
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <TileLabel>Due Diligence Checklist</TileLabel>
+      <button onClick={() => setSectionOpen(o => !o)} className="w-full text-left mb-1 group">
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <TileLabel>Due Diligence Checklist</TileLabel>
+            <svg className={`w-4 h-4 transition-transform ${sectionOpen ? "rotate-180" : ""}`}
+              style={{ color: "#4b5563" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
           <span className="text-xs font-semibold" style={{ color: "var(--green)" }}>
-            {checkedCount}/{totalCount} complete
+            {totalCount} questions
           </span>
         </div>
-        {/* Progress bar */}
-        <div className="h-2 rounded-full overflow-hidden" style={{ background: "#1e1e1e" }}>
-          <div className="h-full transition-all duration-300" style={{
-            width: `${progress}%`,
-            background: progress < 30 ? "#f87171" : progress < 70 ? "#fbbf24" : "var(--green)",
-            boxShadow: `0 0 8px ${progress < 30 ? "#f87171" : progress < 70 ? "#fbbf24" : "var(--green)"}`,
-          }} />
-        </div>
-        <p className="text-xs mt-2" style={{ color: "#4b5563" }}>{progress}% of items reviewed</p>
-      </div>
+        <p className="text-xs" style={{ color: "#4b5563" }}>
+          AI answers every question below from the deck (and web search if needed).
+          {!sectionOpen && ` Click to review ${totalCount} questions across ${order.length} categories.`}
+        </p>
+      </button>
 
+      {sectionOpen && (
+      <>
       {/* Category grid — click a card to view its questions below */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 mt-3">
         {order.map(cat => {
-          const catChecked = grouped[cat].filter(r => checked[r.checklist_id]).length;
-          const catTotal = grouped[cat].length;
-          const catPct = catTotal > 0 ? Math.round((catChecked / catTotal) * 100) : 0;
           const isOpen = openCat === cat;
           return (
             <button key={cat} onClick={() => setOpenCat(isOpen ? null : cat)}
@@ -1024,14 +1104,8 @@ function DDChecklist({ dd_checklist, companyId }) {
               }}
               onMouseEnter={e => { if (!isOpen) e.currentTarget.style.background = "var(--bg-card2)"; }}
               onMouseLeave={e => { if (!isOpen) e.currentTarget.style.background = "transparent"; }}>
-              <p className="text-xs font-semibold text-white leading-tight mb-1.5">{cat}</p>
-              <div className="h-1.5 rounded-full overflow-hidden mb-1" style={{ background: "#1e1e1e" }}>
-                <div className="h-full" style={{
-                  width: `${catPct}%`,
-                  background: catPct < 30 ? "#f87171" : catPct < 70 ? "#fbbf24" : "var(--green)",
-                }} />
-              </div>
-              <p className="text-xs" style={{ color: "#6b7280" }}>{catChecked}/{catTotal}</p>
+              <p className="text-xs font-semibold text-white leading-tight mb-1">{cat}</p>
+              <p className="text-xs" style={{ color: "#6b7280" }}>{grouped[cat].length} question{grouped[cat].length !== 1 ? "s" : ""}</p>
             </button>
           );
         })}
@@ -1048,80 +1122,53 @@ function DDChecklist({ dd_checklist, companyId }) {
           </div>
           {grouped[openCat].map((row) => {
             const key = row.checklist_id;
-            const isChecked = checked[key] || false;
             return (
               <div key={key} className="px-4 py-4"
                 style={{ borderTop: "1px solid var(--border)" }}>
-                <div className="flex gap-3 mb-2">
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={(e) => toggleChecked(key, e.target.checked)}
-                    className="w-5 h-5 rounded cursor-pointer accent-green-500 mt-0.5"
+                <p className="text-sm font-semibold mb-1" style={{ color: "white" }}>
+                  {row.question}
+                </p>
+                <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>
+                  {row.answer || "Not available"}
+                </p>
+                {row.source && !["not_found","error"].includes(row.source) && (
+                  <p className="text-xs mt-1" style={{ color: "#4b5563" }}>
+                    {row.source === "extracted_data" ? "📄 From document" : "🔍 From web search"}
+                  </p>
+                )}
+                {/* Notes — explicit Save button, plus auto-save on blur as a safety net */}
+                <div className="mt-2">
+                  <textarea
+                    placeholder="Add notes…"
+                    value={notes[key] || ""}
+                    onChange={(e) => setNotes({ ...notes, [key]: e.target.value })}
+                    onBlur={() => saveNotes(key)}
+                    rows={notes[key] ? 2 : 1}
+                    className="w-full px-3 py-2 text-xs rounded-lg bg-[#0f0f0f] text-white border border-[#2a2a2a] focus:border-green-500 focus:outline-none resize-none"
                   />
-                  <div className="flex-1">
-                    <p className={`text-sm font-semibold mb-1 ${isChecked ? "line-through" : ""}`}
-                      style={{ color: isChecked ? "#4b5563" : "white" }}>
-                      {row.question}
-                    </p>
-                    <p className="text-sm leading-relaxed" style={{ color: "#9ca3af" }}>
-                      {row.answer || "Not available"}
-                    </p>
-                    {row.source && !["not_found","error"].includes(row.source) && (
-                      <p className="text-xs mt-1" style={{ color: "#4b5563" }}>
-                        {row.source === "extracted_data" ? "📄 From document" : "🔍 From web search"}
-                      </p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <button onClick={() => saveNotes(key)} disabled={noteStatus[key] === "saving"}
+                      className="text-xs font-semibold px-2.5 py-1 rounded-lg transition-opacity hover:opacity-80 disabled:opacity-50"
+                      style={{ background: "var(--green-dim)", color: "var(--green)" }}>
+                      {noteStatus[key] === "saving" ? "Saving…" : "Save note"}
+                    </button>
+                    {noteStatus[key] === "saved" && (
+                      <span className="text-xs" style={{ color: "var(--green)" }}>✓ Saved</span>
                     )}
                   </div>
                 </div>
-                {/* Notes — saved to the backend on blur */}
-                <textarea
-                  placeholder="Add notes…"
-                  value={notes[key] || ""}
-                  onChange={(e) => setNotes({ ...notes, [key]: e.target.value })}
-                  onBlur={(e) => saveNotes(key, e.target.value)}
-                  rows={notes[key] ? 2 : 1}
-                  className="w-full ml-8 mt-2 px-3 py-2 text-xs rounded-lg bg-[#0f0f0f] text-white border border-[#2a2a2a] focus:border-green-500 focus:outline-none resize-none"
-                />
               </div>
             );
           })}
         </div>
+      )}
+      </>
       )}
     </Tile>
   );
 }
 
 // ── Floating Chat Widget ───────────────────────────────────────────────────────
-
-function FloatingChatWidget({ companyId, title }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button onClick={() => setOpen(o => !o)}
-        aria-label={open ? "Close chat" : "Open chat"}
-        className="fixed bottom-5 right-5 z-50 w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105"
-        style={{ background: "var(--green)", color: "#0f0f0f", boxShadow: "0 4px 20px rgba(61,220,132,0.4)" }}>
-        {open ? (
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        ) : (
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-          </svg>
-        )}
-      </button>
-      {open && (
-        <div className="fixed bottom-24 right-5 z-50 rounded-xl overflow-hidden shadow-2xl"
-          style={{ width: "380px", height: "520px", maxWidth: "calc(100vw - 2.5rem)", maxHeight: "calc(100vh - 7rem)" }}>
-          <ChatWidget companyId={companyId} title={title} />
-        </div>
-      )}
-    </>
-  );
-}
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
@@ -1134,6 +1181,7 @@ export default function CompanyPage() {
   const [scoreLoading, setScoreLoading] = useState(false);
   const [webResearch, setWebResearch] = useState(null);
   const [researchLoading, setResearchLoading] = useState(false);
+  const [showPipelineModal, setShowPipelineModal] = useState(false);
 
   const compareWithWeb = async () => {
     if (webResearch || researchLoading) return;
@@ -1165,6 +1213,32 @@ export default function CompanyPage() {
 
     return () => clearTimeout(timer);
   }, [id]);
+
+  // DD checklist generation continues in the background after the rest of the page
+  // is already viewable (see backend: job is marked "completed" before DD runs).
+  // Poll a few times for it to land instead of making the user manually refresh.
+  useEffect(() => {
+    if (!id || loading || data?.dd_checklist?.length) return;
+    let cancelled = false;
+    let attempts = 0;
+    const poll = () => {
+      attempts += 1;
+      if (cancelled || attempts > 15) return; // ~2 min ceiling
+      setTimeout(() => {
+        if (cancelled) return;
+        api.getCompany(id).then(d => {
+          if (cancelled) return;
+          if (d?.dd_checklist?.length) {
+            setData(d);
+          } else {
+            poll();
+          }
+        }).catch(() => {});
+      }, 8000);
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [id, loading, data?.dd_checklist?.length]);
 
   if (loading) return (
     <div className="p-6 animate-pulse">
@@ -1236,13 +1310,20 @@ export default function CompanyPage() {
           {/* Company info */}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3 flex-wrap">
-              {co.logo_url && (
+              {/* Logo display paused for now — extraction sometimes picks the wrong embedded
+                  image. Re-enable by restoring the `co.logo_url &&` condition below. */}
+              {false && co.logo_url && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={co.logo_url} alt="" className="w-9 h-9 rounded-lg object-contain"
                   style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}
                   onError={(e) => { e.currentTarget.style.display = "none"; }} />
               )}
-              <h1 className="text-xl font-bold text-white">{co.name || co.brand_name || `Company #${id}`}</h1>
+              <h1 className="text-xl font-bold text-white">{co.brand_name || co.name || `Company #${id}`}</h1>
+              {co.brand_name && co.name && co.brand_name.trim().toLowerCase() !== co.name.trim().toLowerCase() && (
+                <span className="text-xs" style={{ color: "#6b7280" }}>
+                  Registered as {co.name}
+                </span>
+              )}
               <div className="flex gap-1.5 flex-wrap items-center">
                 {co.sector  && <Badge color="blue">{co.sector}</Badge>}
                 {co.stage   && <Badge color="purple">{co.stage}</Badge>}
@@ -1255,18 +1336,23 @@ export default function CompanyPage() {
               </div>
             </div>
 
-            {/* Company overview — tagline + description shown together, not just the first that exists */}
+            {/* Company overview — tagline + description shown together, but decks often
+                extract the same sentence into both fields; skip the second if it's a dupe */}
             {co.tagline && (
               <p className="text-sm font-medium mt-1.5 max-w-2xl" style={{ color: "var(--text-1)" }}>
                 {co.tagline}
               </p>
             )}
-            {(co.short_description || co.mission_statement) && (
-              <p className="text-sm mt-1 leading-relaxed max-w-2xl"
-                style={{ color: "#9ca3af" }}>
-                {co.short_description || co.mission_statement}
-              </p>
-            )}
+            {(() => {
+              const desc = co.short_description || co.mission_statement;
+              if (!desc) return null;
+              if (co.tagline && desc.trim().toLowerCase() === co.tagline.trim().toLowerCase()) return null;
+              return (
+                <p className="text-sm mt-1 leading-relaxed max-w-2xl" style={{ color: "#9ca3af" }}>
+                  {desc}
+                </p>
+              );
+            })()}
 
             <div className="flex items-center gap-3 mt-2 flex-wrap">
               {co.website_url && (
@@ -1297,6 +1383,7 @@ export default function CompanyPage() {
           {/* Score gauge + PDF + Web research */}
           <div className="flex items-center gap-4 shrink-0">
             <ScoreGauge score={data.score} loading={scoreLoading} />
+            <PipelineStatusPill pipeline={data.pipeline} onClick={() => setShowPipelineModal(true)} />
             <button onClick={compareWithWeb} disabled={researchLoading || !!webResearch}
               className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl text-xs font-semibold transition-opacity hover:opacity-80 disabled:opacity-60"
               style={{ background: "rgba(96,165,250,0.1)", color: "#60a5fa", border: "1px solid rgba(96,165,250,0.3)" }}>
@@ -1325,59 +1412,46 @@ export default function CompanyPage() {
         {/* Insight box — strengths & risks */}
         <InsightBox data={data} />
 
+        {/* Investment Score — full-width horizontal block (gauge + breakdown + AI
+            thesis together), leading with the verdict before the narrative detail below */}
+        {scoreLoading
+          ? <Tile>
+              <TileLabel>Investment Score</TileLabel>
+              <div className="space-y-3 animate-pulse">
+                <div className="h-32 rounded" style={{ background: "#2a2a2a" }} />
+              </div>
+            </Tile>
+          : <InvestmentScoreCard score={data.score} />}
+
         {/* Problem / Solution */}
         <ProblemSolutionTile company={co} />
 
-        {/* Row 1: Key Metrics | Revenue Chart | Investment Score */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <KeyMetricsTile traction={data.traction} />
-
-          <Tile>
-            <TileLabel>Revenue Trend</TileLabel>
-            <RevenueChart traction={data.traction} />
-          </Tile>
-
-          {scoreLoading
-            ? <Tile>
-                <TileLabel>Investment Score</TileLabel>
-                <div className="space-y-3 animate-pulse">
-                  <div className="h-32 rounded" style={{ background: "#2a2a2a" }} />
-                </div>
-              </Tile>
-            : <InvestmentScoreCard score={data.score} />}
-        </div>
+        {/* Key Metrics */}
+        <KeyMetricsTile traction={data.traction} />
 
         {/* Market Analysis */}
         <MarketAnalysisCard market={data.market} webData={webResearch?.market} />
 
-        {/* Row 2: Team | Funding | Risk */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Row 2: Team | Funding (Risk Assessment removed — it duplicated the AI-driven
+            Risks box above, and two of its six rows were hardcoded constants
+            ("Product Risk: Moderate", "Regulatory Risk: Low") regardless of actual data) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <TeamTile team={data.team} webTeam={webResearch?.team} />
           <FundingTile fundraise_rounds={data.fundraise_rounds} investors={data.investors} webFunding={webResearch?.funding} />
-          <RiskTile score={data.score} competitors={data.competitors} />
         </div>
 
-        {/* Row 3: Competitors | Products */}
-        {(data.competitors?.length > 0 || data.products?.length > 0) && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <CompetitorsTile competitors={data.competitors} webCompetitors={webResearch?.competitors} />
-            {data.products?.length > 0 && <ProductsTile products={data.products} />}
-          </div>
-        )}
-
-        {/* Financials — actuals + projections merged into one year-sorted table */}
+        {/* Financials — actuals + projections merged into one year-sorted table.
+            Moved above Competitors/Products — financial health is the more load-bearing
+            read before diving into competitive landscape. */}
         <FinancialsTile financials={data.financials} financial_projections={data.financial_projections} />
 
-        {/* Row 4: Investment recommendation (includes AI thesis) */}
-        {data.score && <RecommendationTile score={data.score} />}
-
-        {/* Pipeline Management */}
-        <PipelinePanel
-          companyId={id}
-          initialData={data.pipeline}
-        />
-
-        {/* DD Checklist */}
+        {/* Row 3: Competitors | Products — shared collapse control */}
+        {(data.competitors?.length > 0 || data.products?.length > 0) && (
+          <CompetitorsAndProducts
+            competitors={data.competitors} webCompetitors={webResearch?.competitors}
+            products={data.products}
+          />
+        )}
 
         <NewsSection companyId={id} />
 
@@ -1405,7 +1479,11 @@ export default function CompanyPage() {
         </div>
       </div>
 
-      <FloatingChatWidget companyId={id} title={`Chat about ${co.name || 'this company'}`} />
+      <FloatingChatWidget companyId={id} title={`Chat about ${co.brand_name || co.name || 'this company'}`} />
+
+      {showPipelineModal && (
+        <PipelineModal companyId={id} initialData={data.pipeline} onClose={() => setShowPipelineModal(false)} />
+      )}
     </div>
   );
 }

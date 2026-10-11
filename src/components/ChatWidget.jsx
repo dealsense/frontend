@@ -15,8 +15,8 @@ function Message({ msg }) {
         className="max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed"
         style={isUser
           ? { background: "var(--green)", color: "#0f0f0f", borderBottomRightRadius: "4px" }
-          : { background: "var(--bg-card)", border: "1px solid var(--border)",
-              color: "#9ca3af", borderBottomLeftRadius: "4px" }}
+          : { background: "#f3f4f6", border: "1px solid #e5e7eb",
+              color: "#111827", borderBottomLeftRadius: "4px" }}
       >
         {isUser ? (
           msg.content
@@ -26,13 +26,14 @@ function Message({ msg }) {
           <ReactMarkdown
             rehypePlugins={[rehypeSanitize]}
             components={{
-              h3: ({node, ...props}) => <p style={{ fontWeight: 700, color: "white", margin: "8px 0 4px" }} {...props} />,
+              h3: ({node, ...props}) => <p style={{ fontWeight: 700, color: "#000", margin: "8px 0 4px" }} {...props} />,
+              strong: ({node, ...props}) => <strong style={{ color: "#000", fontWeight: 700 }} {...props} />,
               ul: ({node, ...props}) => <ul style={{ listStyle: "disc", paddingLeft: "1rem", margin: "4px 0" }} {...props} />,
               li: ({node, ...props}) => <li style={{ margin: "2px 0" }} {...props} />,
               p: ({node, ...props}) => <span style={{ display: "block", marginBottom: "4px" }} {...props} />,
-              a: ({node, ...props}) => <a style={{color: 'var(--green)', textDecoration: 'underline'}} {...props} />,
+              a: ({node, ...props}) => <a style={{color: '#15803d', textDecoration: 'underline'}} {...props} />,
             }}
-            className="prose prose-sm prose-invert"
+            className="prose prose-sm"
           >
             {msg.content}
           </ReactMarkdown>
@@ -42,19 +43,105 @@ function Message({ msg }) {
   );
 }
 
+const ASSISTANT_NAME = "Dia";
+
+const GREETING = (companyId) => ({
+  role: "assistant",
+  content: companyId
+    ? `Hi! I'm ${ASSISTANT_NAME}. Ask me anything about this company — I'll analyze their traction, team, market, and investment potential.`
+    : `Hi! I'm ${ASSISTANT_NAME}. Ask me about your portfolio, any company, or investment trends.`,
+});
+
+const SUGGESTED_QUESTIONS_COMPANY = [
+  "What's the investment thesis in 3 sentences?",
+  "What are the biggest risks here?",
+  "How does this compare to its competitors?",
+  "Summarize the team's background",
+];
+const SUGGESTED_QUESTIONS_PORTFOLIO = [
+  "Which companies need attention this week?",
+  "Summarize my portfolio by sector",
+  "What are common risks across my deals?",
+];
+
+function scope(companyId) {
+  return companyId || "portfolio";
+}
+function sessionsKey(companyId) {
+  return `ds_chat_sessions_${scope(companyId)}`;
+}
+function activeKey(companyId) {
+  return `ds_chat_active_${scope(companyId)}`;
+}
+
+function newSession(companyId) {
+  return {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    title: null, // derived from first user message once sent
+    messages: [GREETING(companyId)],
+    updatedAt: Date.now(),
+  };
+}
+
+// A session with nothing but the greeting is "blank" — it shouldn't clutter history
+// as a "New chat" entry until the person has actually asked something in it.
+function isBlank(session) {
+  return !session || session.messages.length <= 1;
+}
+
+function loadSessions(companyId) {
+  try {
+    const raw = localStorage.getItem(sessionsKey(companyId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+  } catch {}
+  return [newSession(companyId)];
+}
+
+function saveSessions(companyId, sessions) {
+  try { localStorage.setItem(sessionsKey(companyId), JSON.stringify(sessions)); } catch {}
+}
+
+function loadActiveId(companyId, sessions) {
+  try {
+    const id = localStorage.getItem(activeKey(companyId));
+    if (id && sessions.some(s => s.id === id)) return id;
+  } catch {}
+  return sessions[0]?.id;
+}
+
+function saveActiveId(companyId, id) {
+  try { localStorage.setItem(activeKey(companyId), id); } catch {}
+}
+
+function relativeTime(ts) {
+  const diffMin = Math.round((Date.now() - ts) / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  return `${diffDay}d ago`;
+}
+
 export default function ChatWidget({ companyId = null, title = "AI Analyst Chat" }) {
-  const [messages, setMessages] = useState([
-    {
-      role: "assistant",
-      content: companyId
-        ? "Hi! I'm DealSense AI. Ask me anything about this company — I'll analyze their traction, team, market, and investment potential."
-        : "Hi! I'm DealSense AI. Ask me about your portfolio, any company, or investment trends."
-    },
-  ]);
+  // Per-viewer convenience only (not shared/critical state) — survives a page reload.
+  // activeId must be derived from the SAME sessions array `sessions` was initialized
+  // with — calling loadSessions(companyId) a second time here would mint a brand-new
+  // session (fresh random id) when none existed yet, so activeId would point at a
+  // session that was never actually in `sessions`. Every updateActiveSession() call
+  // would then silently no-op (.map() finds no match) — messages looked like they
+  // were "sending" (loading state flips, suggestions hide) but never actually saved.
+  const [sessions, setSessions] = useState(() => loadSessions(companyId));
+  const [activeId, setActiveId] = useState(() => loadActiveId(companyId, sessions));
+  const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
   const { showToast } = useToast();
+
+  const active = sessions.find(s => s.id === activeId) || sessions[0];
+  const messages = active?.messages || [GREETING(companyId)];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -64,64 +151,63 @@ export default function ChatWidget({ companyId = null, title = "AI Analyst Chat"
     scrollToBottom();
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
+  const updateActiveSession = (updater) => {
+    setSessions(prev => {
+      const next = prev.map(s => s.id === activeId ? { ...s, ...updater(s), updatedAt: Date.now() } : s);
+      saveSessions(companyId, next);
+      return next;
+    });
+  };
 
-    const userMsg = input.trim();
+  const handleSend = async (overrideText) => {
+    const userMsg = (overrideText ?? input).trim();
+    if (!userMsg || loading) return;
     setInput("");
 
-    // Add user message to chat
-    const userMsg_obj = { role: "user", content: userMsg };
-    setMessages((prev) => {
-      const updated = [...prev, userMsg_obj];
-      console.log("Added user message. Messages now:", updated);
-      return updated;
-    });
+    // Prior turns (excluding the greeting, which is a UI nicety not a real exchange),
+    // capped to the last 12 — without this, every message was answered with zero
+    // memory of what came before, so a follow-up like "what about from the web" had
+    // nothing to anchor to.
+    const history = messages.slice(1).slice(-12).map(m => ({ role: m.role, content: m.content }));
 
+    updateActiveSession(s => ({
+      messages: [...s.messages, { role: "user", content: userMsg }],
+      title: s.title || userMsg.slice(0, 48),
+    }));
     setLoading(true);
 
     try {
-      console.log("🔵 Sending chat request:", { message: userMsg, companyId, loading: true });
-      const response = await api.chat(userMsg, companyId);
-      console.log("🟢 Chat response received:", response);
-      console.log("Response type:", typeof response);
-      console.log("Response keys:", response ? Object.keys(response) : "null");
-
-      if (!response) {
-        throw new Error("No response from server");
+      const response = await api.chat(userMsg, companyId, history);
+      if (!response || response.response === undefined || response.response === null) {
+        throw new Error("Invalid response from server");
       }
-
-      if (response.response === undefined || response.response === null) {
-        console.error("❌ Response field is empty:", response);
-        throw new Error(`Invalid response format: ${JSON.stringify(response)}`);
-      }
-
-      const assistantMsg = {
-        role: "assistant",
-        content: String(response.response)
-      };
-
-      console.log("Adding assistant message:", assistantMsg);
-      setMessages((prev) => {
-        const updated = [...prev, assistantMsg];
-        console.log("Messages after adding assistant response:", updated);
-        return updated;
-      });
-
+      updateActiveSession(s => ({ messages: [...s.messages, { role: "assistant", content: String(response.response) }] }));
     } catch (err) {
-      console.error("❌ Chat error:", err);
-      console.error("Error message:", err.message);
-      console.error("Full error:", err);
       showToast(err.message || "Chat request failed", "error");
-      setMessages((prev) => {
-        const filtered = prev.slice(0, -1);
-        console.log("Removed user message on error. Messages:", filtered);
-        return filtered;
-      });
+      updateActiveSession(s => ({ messages: s.messages.slice(0, -1) })); // drop the user message so they can retry
     } finally {
-      console.log("Setting loading to false");
       setLoading(false);
     }
+  };
+
+  const startNewChat = () => {
+    // Already sitting on a blank chat — don't pile up empty "New chat" entries.
+    if (isBlank(active)) { setShowHistory(false); return; }
+    const fresh = newSession(companyId);
+    setSessions(prev => {
+      const next = [fresh, ...prev];
+      saveSessions(companyId, next);
+      return next;
+    });
+    setActiveId(fresh.id);
+    saveActiveId(companyId, fresh.id);
+    setShowHistory(false);
+  };
+
+  const switchToSession = (id) => {
+    setActiveId(id);
+    saveActiveId(companyId, id);
+    setShowHistory(false);
   };
 
   const handleKeyDown = (e) => {
@@ -131,35 +217,92 @@ export default function ChatWidget({ companyId = null, title = "AI Analyst Chat"
     }
   };
 
+  // Blank sessions (opened but never used) don't show up as "New chat" clutter in history.
+  const pastSessions = sessions
+    .filter(s => s.id !== activeId && !isBlank(s))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+
   return (
-    <div className="flex flex-col h-full bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] rounded-xl border border-[#2a2a2a] overflow-hidden">
+    <div className="flex flex-col h-full bg-white rounded-xl border border-[#e5e7eb] overflow-hidden relative">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[#2a2a2a] flex items-center gap-2">
+      <div className="px-4 py-3 border-b border-[#e5e7eb] flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-[var(--green)] animate-pulse" />
-        <h3 className="text-sm font-bold text-white">{title}</h3>
+        <h3 className="text-sm font-bold text-black flex-1 truncate">{title}</h3>
+        <button onClick={() => setShowHistory(s => !s)}
+          aria-label="Chat history"
+          className="p-1.5 rounded-lg transition-colors hover:bg-[#f3f4f6] shrink-0"
+          style={{ color: showHistory ? "#15803d" : "#6b7280" }}>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </button>
+        <button onClick={startNewChat} aria-label="New chat"
+          className="p-1.5 rounded-lg transition-colors hover:bg-[#f3f4f6] shrink-0"
+          style={{ color: "#6b7280" }}>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
       </div>
 
+      {/* History dropdown */}
+      {showHistory && (
+        <div className="absolute top-12 right-2 left-2 z-10 rounded-xl overflow-hidden shadow-2xl max-h-64 overflow-y-auto"
+          style={{ background: "white", border: "1px solid #e5e7eb" }}>
+          <button onClick={startNewChat}
+            className="w-full text-left px-3 py-2.5 text-sm font-semibold transition-colors hover:bg-[#f3f4f6]"
+            style={{ color: "#15803d", borderBottom: "1px solid #e5e7eb" }}>
+            + New chat
+          </button>
+          {pastSessions.length === 0 ? (
+            <p className="px-3 py-3 text-xs" style={{ color: "#9ca3af" }}>No past conversations yet.</p>
+          ) : (
+            pastSessions.map(s => (
+              <button key={s.id} onClick={() => switchToSession(s.id)}
+                className="w-full text-left px-3 py-2.5 transition-colors hover:bg-[#f3f4f6]"
+                style={{ borderBottom: "1px solid #e5e7eb" }}>
+                <p className="text-xs font-semibold text-black truncate">{s.title || "New chat"}</p>
+                <p className="text-xs mt-0.5" style={{ color: "#9ca3af" }}>{relativeTime(s.updatedAt)}</p>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-[#2a2a2a] scrollbar-track-transparent">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-[#e5e7eb] scrollbar-track-transparent"
+        onClick={() => showHistory && setShowHistory(false)}>
         {messages.map((msg, i) => (
           <Message key={i} msg={msg} />
         ))}
         {loading && (
           <div className="flex justify-start">
-            <div className="px-4 py-3 rounded-2xl bg-[var(--bg-card)] border border-[#2a2a2a]">
+            <div className="px-4 py-3 rounded-2xl" style={{ background: "#f3f4f6", border: "1px solid #e5e7eb" }}>
               <div className="flex gap-1">
-                <div className="w-2 h-2 rounded-full bg-[#4b5563] animate-bounce" />
-                <div className="w-2 h-2 rounded-full bg-[#4b5563] animate-bounce" style={{ animationDelay: "0.2s" }} />
-                <div className="w-2 h-2 rounded-full bg-[#4b5563] animate-bounce" style={{ animationDelay: "0.4s" }} />
+                <div className="w-2 h-2 rounded-full bg-[#9ca3af] animate-bounce" />
+                <div className="w-2 h-2 rounded-full bg-[#9ca3af] animate-bounce" style={{ animationDelay: "0.2s" }} />
+                <div className="w-2 h-2 rounded-full bg-[#9ca3af] animate-bounce" style={{ animationDelay: "0.4s" }} />
               </div>
             </div>
+          </div>
+        )}
+        {messages.length === 1 && !loading && (
+          <div className="flex flex-col gap-1.5 pt-1">
+            {(companyId ? SUGGESTED_QUESTIONS_COMPANY : SUGGESTED_QUESTIONS_PORTFOLIO).map((q, i) => (
+              <button key={i} onClick={() => handleSend(q)}
+                className="text-left text-xs px-3 py-2 rounded-lg transition-colors hover:border-[var(--green)]"
+                style={{ background: "#f9fafb", border: "1px solid #e5e7eb", color: "#374151" }}>
+                {q}
+              </button>
+            ))}
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
-      <div className="px-4 py-3 border-t border-[#2a2a2a]">
+      <div className="px-4 py-3 border-t border-[#e5e7eb]">
         <div className="flex gap-2">
           <textarea
             value={input}
@@ -168,15 +311,15 @@ export default function ChatWidget({ companyId = null, title = "AI Analyst Chat"
             placeholder="Ask me anything..."
             disabled={loading}
             rows={2}
-            className="flex-1 bg-[#111] text-white text-sm rounded-lg px-3 py-2 border border-[#2a2a2a] focus:border-[var(--green)] focus:outline-none focus:ring-1 focus:ring-[var(--green)] resize-none"
+            className="flex-1 bg-white text-black text-sm rounded-lg px-3 py-2 border border-[#e5e7eb] focus:border-[var(--green)] focus:outline-none focus:ring-1 focus:ring-[var(--green)] resize-none"
           />
           <button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={loading || !input.trim()}
             className="px-4 py-2 rounded-lg font-semibold transition-all flex items-center gap-1"
             style={{
-              background: input.trim() ? "var(--green)" : "#2a2a2a",
-              color: input.trim() ? "#0f0f0f" : "#6b7280",
+              background: input.trim() ? "var(--green)" : "#e5e7eb",
+              color: input.trim() ? "#0f0f0f" : "#9ca3af",
               cursor: input.trim() ? "pointer" : "not-allowed",
             }}
           >

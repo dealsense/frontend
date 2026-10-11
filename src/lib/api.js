@@ -136,11 +136,11 @@ export const api = {
     return `${API_URL}${url}`;
   },
 
-  async chat(message, companyId = null) {
+  async chat(message, companyId = null, history = []) {
     const res = await fetch(`${API_URL}/chat`, {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ message, company_id: companyId }),
+      body: JSON.stringify({ message, company_id: companyId, history }),
     });
     if (!res.ok) throw new Error("Chat request failed");
     return res.json();
@@ -162,6 +162,16 @@ export const api = {
     const fd = new FormData();
     fd.append("file", file);
     const res = await fetch(`${API_URL}/extract-and-seed`, { method: "POST", headers: authHeaders(), body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Upload failed");
+    return data;
+  },
+
+  async uploadDocumentsMulti(files, driveLinks) {
+    const fd = new FormData();
+    for (const file of files || []) fd.append("files", file);
+    if (driveLinks && driveLinks.length) fd.append("drive_links", driveLinks.join("\n"));
+    const res = await fetch(`${API_URL}/extract-and-seed-multi`, { method: "POST", headers: authHeaders(), body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || "Upload failed");
     return data;

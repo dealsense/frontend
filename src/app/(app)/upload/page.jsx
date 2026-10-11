@@ -99,34 +99,59 @@ function SeedSummary({ detail }) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
+const MAX_DOCS = 6;
+
 export default function UploadPage() {
-  const [file, setFile]     = useState(null);
+  const [files, setFiles]   = useState([]);
+  const [driveLinks, setDriveLinks] = useState("");
   const [status, setStatus] = useState("idle");
   const [result, setResult] = useState(null);
   const [error, setError]   = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
   const inputRef = useRef(null);
 
-  const handleDrop = (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) setFile(f); };
+  const addFiles = (list) => {
+    const incoming = Array.from(list || []);
+    if (!incoming.length) return;
+    setFiles(prev => {
+      const merged = [...prev, ...incoming].slice(0, MAX_DOCS);
+      return merged;
+    });
+  };
+
+  const handleDrop = (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); };
+  const removeFile = (idx) => setFiles(prev => prev.filter((_, i) => i !== idx));
+
+  const linkList = driveLinks.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  const totalDocs = files.length + linkList.length;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!file) return;
+    if (!totalDocs) return;
 
-    // Client-side size guard (50MB)
-    if (file.size > 50 * 1024 * 1024) {
-      setError("File is too large. Maximum size is 50MB.");
+    // Client-side size guard (50MB per file)
+    const oversized = files.find(f => f.size > 50 * 1024 * 1024);
+    if (oversized) {
+      setError(`"${oversized.name}" is too large. Maximum size is 50MB per file.`);
+      setStatus("error");
+      return;
+    }
+    if (totalDocs > MAX_DOCS) {
+      setError(`Maximum ${MAX_DOCS} documents per upload.`);
       setStatus("error");
       return;
     }
 
-    setStatus("uploading"); setError(null); setResult(null); setJobStatus("Uploading file…");
+    setStatus("uploading"); setError(null); setResult(null);
+    setJobStatus(totalDocs > 1 ? `Uploading ${totalDocs} documents…` : "Uploading file…");
 
     let jobId;
     try {
-      const data = await api.uploadDocument(file);
+      const data = (files.length === 1 && linkList.length === 0)
+        ? await api.uploadDocument(files[0])
+        : await api.uploadDocumentsMulti(files, linkList);
 
-      // Skipped duplicate
+      // Skipped duplicate (single-file path only)
       if (data.status === "skipped") {
         setResult(data); setStatus("done"); setJobStatus(null);
         return;
@@ -144,7 +169,7 @@ export default function UploadPage() {
     }
 
     // Poll until job is completed or failed
-    setJobStatus("Extracting & analysing document…");
+    setJobStatus(totalDocs > 1 ? "Extracting & merging documents…" : "Extracting & analysing document…");
     const poll = async () => {
       try {
         const job = await api.getExtractionStatus(jobId);
@@ -171,6 +196,8 @@ export default function UploadPage() {
       <h1 className="text-xl font-bold text-white mb-1">Upload Pitch Deck</h1>
       <p className="text-sm mb-8" style={{ color: "#4b5563" }}>
         PDF, PPTX, or DOCX — extracted, structured, and seeded into your portfolio automatically.
+        Upload multiple documents for one company (deck + financial model + cap table) and they'll
+        be merged into a single profile.
       </p>
 
       <form onSubmit={handleSubmit}>
@@ -178,36 +205,59 @@ export default function UploadPage() {
         <div
           onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}
           onClick={() => inputRef.current?.click()}
-          className="rounded-xl p-12 text-center cursor-pointer transition-all mb-4"
-          style={{ border: `2px dashed ${file ? "var(--green)" : "var(--border)"}`,
-                   background: file ? "var(--green-dim)" : "var(--bg-card)" }}>
-          <input ref={inputRef} type="file" accept=".pdf,.pptx,.ppt,.docx"
-            className="hidden" onChange={e => setFile(e.target.files[0] || null)} />
-          {file ? (
-            <div>
-              <div className="text-3xl mb-2">✓</div>
-              <p className="font-semibold text-white text-sm">{file.name}</p>
-              <p className="text-xs mt-1" style={{ color: "#6b7280" }}>{(file.size/1024/1024).toFixed(2)} MB</p>
-              <button type="button" onClick={e => { e.stopPropagation(); setFile(null); }}
-                className="mt-2 text-xs hover:underline" style={{ color: "#f87171" }}>Remove</button>
-            </div>
-          ) : (
-            <div>
-              <svg className="w-10 h-10 mx-auto mb-3" style={{ color: "#374151" }}
-                fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-              </svg>
-              <p className="font-medium text-white">Drop a file or click to browse</p>
-              <p className="text-sm mt-1" style={{ color: "#4b5563" }}>PDF · PPTX · DOCX</p>
-            </div>
-          )}
+          className="rounded-xl p-12 text-center cursor-pointer transition-all mb-3"
+          style={{ border: `2px dashed ${files.length ? "var(--green)" : "var(--border)"}`,
+                   background: files.length ? "var(--green-dim)" : "var(--bg-card)" }}>
+          <input ref={inputRef} type="file" accept=".pdf,.pptx,.ppt,.docx" multiple
+            className="hidden" onChange={e => { addFiles(e.target.files); e.target.value = ""; }} />
+          <svg className="w-10 h-10 mx-auto mb-3" style={{ color: "#374151" }}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          <p className="font-medium text-white">Drop file(s) or click to browse</p>
+          <p className="text-sm mt-1" style={{ color: "#4b5563" }}>PDF · PPTX · DOCX — up to {MAX_DOCS} files</p>
         </div>
 
-        <button type="submit" disabled={!file || status === "uploading"}
+        {/* Selected files list */}
+        {files.length > 0 && (
+          <div className="mb-3 space-y-1.5">
+            {files.map((f, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-2 rounded-lg text-sm"
+                style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                <span className="text-white truncate">{f.name}</span>
+                <div className="flex items-center gap-3 shrink-0 ml-3">
+                  <span style={{ color: "#6b7280" }} className="text-xs">{(f.size/1024/1024).toFixed(2)} MB</span>
+                  <button type="button" onClick={() => removeFile(i)}
+                    className="hover:underline text-xs" style={{ color: "#f87171" }}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Google Drive links */}
+        <div className="mb-4">
+          <label className="text-xs font-semibold block mb-1.5" style={{ color: "#6b7280" }}>
+            Or paste Google Drive link(s) — one per line
+          </label>
+          <textarea
+            value={driveLinks}
+            onChange={e => setDriveLinks(e.target.value)}
+            placeholder="https://drive.google.com/file/d/..."
+            rows={2}
+            className="w-full text-sm rounded-lg px-3 py-2 resize-none"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "white" }}
+          />
+          <p className="text-xs mt-1" style={{ color: "#4b5563" }}>
+            File must be shared as "Anyone with the link can view".
+          </p>
+        </div>
+
+        <button type="submit" disabled={!totalDocs || status === "uploading"}
           className="w-full py-3 text-sm font-bold rounded-xl transition-opacity disabled:opacity-40"
           style={{ background: "var(--green)", color: "#0f0f0f" }}>
-          {status === "uploading" ? "Extracting & seeding…" : "Upload & Analyse"}
+          {status === "uploading" ? "Extracting & seeding…" : totalDocs > 1 ? `Upload & Analyse ${totalDocs} Documents` : "Upload & Analyse"}
         </button>
       </form>
 

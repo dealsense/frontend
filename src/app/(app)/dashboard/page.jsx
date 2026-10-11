@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { compact, cr, inr } from "@/lib/format";
-import ChatWidget from "@/components/ChatWidget";
+import FloatingChatWidget from "@/components/FloatingChatWidget";
 
 // ── Extraction result display (shared with upload/page.jsx) ───────────────────
 
@@ -84,6 +84,16 @@ function SeedSummary({ detail }) {
 
 // ── Design helpers ─────────────────────────────────────────────────────────────
 
+// Bare letter grades meant nothing without context — hover now spells out what
+// each one represents (same wording as the Glossary's "DealSense Investment Grades"
+// section, so the two stay consistent).
+const GRADE_MEANING = {
+  A: "Grade A (80–100) — Ready to Invest",
+  B: "Grade B (60–79) — Watch List",
+  C: "Grade C (40–59) — Not Ready Yet",
+  D: "Grade D (0–39) — Decline",
+};
+
 function GradePill({ grade }) {
   if (!grade) return <span style={{ color: "#4b5563" }} className="text-xs">—</span>;
   const styles = {
@@ -93,15 +103,8 @@ function GradePill({ grade }) {
     D: { background: "rgba(248,113,113,0.15)", color: "#f87171", border: "1px solid rgba(248,113,113,0.3)" },
   };
   return (
-    <span className="px-2 py-0.5 rounded text-xs font-bold" style={styles[grade] || styles.D}>{grade}</span>
-  );
-}
-
-function SortIcon({ active, dir }) {
-  return (
-    <span className="ml-1 text-xs" style={{ color: active ? "var(--green)" : "#374151" }}>
-      {active ? (dir === "asc" ? "↑" : "↓") : "↕"}
-    </span>
+    <span className="px-2 py-0.5 rounded text-xs font-bold cursor-help" title={GRADE_MEANING[grade] || ""}
+      style={styles[grade] || styles.D}>{grade}</span>
   );
 }
 
@@ -113,22 +116,36 @@ function ChurnVal({ v }) {
 
 // ── Upload Modal ───────────────────────────────────────────────────────────────
 
+const MAX_UPLOAD_DOCS = 6;
+
 function UploadModal({ onClose, onSuccess }) {
-  const [file, setFile]   = useState(null);
+  const [files, setFiles] = useState([]);
+  const [driveLinks, setDriveLinks] = useState("");
   const [status, setStatus] = useState("idle");
   const [result, setResult] = useState(null);
   const [error, setError]  = useState(null);
   const inputRef = useRef(null);
 
-  const handleDrop = (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) setFile(f); };
+  const addFiles = (list) => {
+    const incoming = Array.from(list || []);
+    if (!incoming.length) return;
+    setFiles(prev => [...prev, ...incoming].slice(0, MAX_UPLOAD_DOCS));
+  };
+  const removeFile = (idx) => setFiles(prev => prev.filter((_, i) => i !== idx));
+  const handleDrop = (e) => { e.preventDefault(); addFiles(e.dataTransfer.files); };
+
+  const linkList = driveLinks.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  const totalDocs = files.length + linkList.length;
 
   const submit = async () => {
-    if (!file || status === "uploading") return;
+    if (!totalDocs || status === "uploading") return;
     setStatus("uploading"); setError(null); setResult(null);
 
     let jobId;
     try {
-      const d = await api.uploadDocument(file);
+      const d = (files.length === 1 && linkList.length === 0)
+        ? await api.uploadDocument(files[0])
+        : await api.uploadDocumentsMulti(files, linkList);
       if (d.status === "skipped" || !d.job_id) { setResult(d); setStatus("done"); return; }
       jobId = d.job_id;
     } catch (err) {
@@ -180,28 +197,46 @@ function UploadModal({ onClose, onSuccess }) {
           <>
             <div onDrop={handleDrop} onDragOver={e => e.preventDefault()}
               onClick={() => inputRef.current?.click()}
-              className="rounded-xl p-8 text-center cursor-pointer transition-all mb-4"
-              style={{ border: `2px dashed ${file ? "var(--green)" : "var(--border)"}`,
-                       background: file ? "var(--green-dim)" : "var(--bg-card2)" }}>
-              <input ref={inputRef} type="file" accept=".pdf,.pptx,.ppt,.docx"
-                className="hidden" onChange={e => setFile(e.target.files[0] || null)} />
-              {file ? (
-                <div>
-                  <div className="text-2xl mb-1">✓</div>
-                  <p className="font-semibold text-white text-sm">{file.name}</p>
-                  <p className="text-xs mt-1" style={{ color: "#6b7280" }}>{(file.size/1024/1024).toFixed(2)} MB</p>
-                  <button type="button" onClick={e => { e.stopPropagation(); setFile(null); }}
-                    className="mt-2 text-xs hover:underline" style={{ color: "var(--red)" }}>Remove</button>
-                </div>
-              ) : (
-                <div>
-                  <svg className="w-8 h-8 mx-auto mb-2" style={{ color: "#4b5563" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                  <p className="text-sm text-white font-medium">Drop or click to browse</p>
-                  <p className="text-xs mt-1" style={{ color: "#4b5563" }}>PDF · PPTX · DOCX</p>
-                </div>
-              )}
+              className="rounded-xl p-8 text-center cursor-pointer transition-all mb-3"
+              style={{ border: `2px dashed ${files.length ? "var(--green)" : "var(--border)"}`,
+                       background: files.length ? "var(--green-dim)" : "var(--bg-card2)" }}>
+              <input ref={inputRef} type="file" accept=".pdf,.pptx,.ppt,.docx" multiple
+                className="hidden" onChange={e => { addFiles(e.target.files); e.target.value = ""; }} />
+              <svg className="w-8 h-8 mx-auto mb-2" style={{ color: "#4b5563" }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              <p className="text-sm text-white font-medium">Drop file(s) or click to browse</p>
+              <p className="text-xs mt-1" style={{ color: "#4b5563" }}>PDF · PPTX · DOCX — up to {MAX_UPLOAD_DOCS} files</p>
+            </div>
+
+            {files.length > 0 && (
+              <div className="mb-3 space-y-1.5">
+                {files.map((f, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs"
+                    style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                    <span className="text-white truncate">{f.name}</span>
+                    <button type="button" onClick={() => removeFile(i)}
+                      className="hover:underline ml-2 shrink-0" style={{ color: "var(--red)" }}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="text-xs font-semibold block mb-1.5" style={{ color: "#6b7280" }}>
+                Or paste Google Drive link(s) — one per line
+              </label>
+              <textarea
+                value={driveLinks}
+                onChange={e => setDriveLinks(e.target.value)}
+                placeholder="https://drive.google.com/file/d/..."
+                rows={2}
+                className="w-full text-xs rounded-lg px-3 py-2 resize-none"
+                style={{ background: "var(--bg-card2)", border: "1px solid var(--border)", color: "white" }}
+              />
+              <p className="text-xs mt-1" style={{ color: "#4b5563" }}>
+                File must be shared as "Anyone with the link can view".
+              </p>
             </div>
 
             {status === "uploading" && (
@@ -215,10 +250,10 @@ function UploadModal({ onClose, onSuccess }) {
             )}
             {status === "error" && <p className="text-sm mb-3" style={{ color: "var(--red)" }}>{error}</p>}
 
-            <button onClick={submit} disabled={!file || status === "uploading"}
+            <button onClick={submit} disabled={!totalDocs || status === "uploading"}
               className="w-full py-2.5 text-sm font-bold rounded-lg transition-opacity disabled:opacity-40"
               style={{ background: "var(--green)", color: "#0f0f0f" }}>
-              {status === "uploading" ? "Processing…" : "Upload & Analyse"}
+              {status === "uploading" ? "Processing…" : totalDocs > 1 ? `Upload & Analyse ${totalDocs} Documents` : "Upload & Analyse"}
             </button>
           </>
         )}
@@ -240,7 +275,7 @@ function UploadModal({ onClose, onSuccess }) {
             <div className="flex gap-2">
               <button onClick={onSuccess} className="flex-1 py-2 text-sm font-bold rounded-lg"
                 style={{ background: "var(--green)", color: "#0f0f0f" }}>Done</button>
-              <button onClick={() => { setStatus("idle"); setFile(null); setResult(null); }}
+              <button onClick={() => { setStatus("idle"); setFiles([]); setDriveLinks(""); setResult(null); }}
                 className="flex-1 py-2 text-sm rounded-lg transition-colors"
                 style={{ border: "1px solid var(--border)", color: "#9ca3af" }}>Upload another</button>
             </div>
@@ -480,7 +515,7 @@ export default function DashboardPage() {
                     className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider cursor-pointer select-none whitespace-nowrap transition-colors"
                     style={{ color: sortCol === col.key ? "var(--green)" : "#4b5563",
                              minWidth: col.minWidth ? col.minWidth : undefined }}>
-                    {col.label}<SortIcon active={sortCol === col.key} dir={sortDir} />
+                    {col.label}
                   </th>
                 ))}
                 <th className="px-4 py-3 w-10" />
@@ -515,8 +550,11 @@ export default function DashboardPage() {
                   <td className="px-4 py-4">
                     <div className="font-semibold text-white text-sm group-hover:text-green-400 transition-colors"
                       style={{}}>
-                      {c.name || c.brand_name || "—"}
+                      {c.brand_name || c.name || "—"}
                     </div>
+                    {c.brand_name && c.name && c.brand_name.trim().toLowerCase() !== c.name.trim().toLowerCase() && (
+                      <div className="text-xs mt-0.5" style={{ color: "#4b5563" }}>{c.name}</div>
+                    )}
                     {c.sub_sector && <div className="text-xs mt-0.5" style={{ color: "#4b5563" }}>{c.sub_sector}</div>}
                   </td>
                   <td className="px-4 py-4 text-sm" style={{ color: "#9ca3af" }}>{c.sector || "—"}</td>
@@ -559,14 +597,10 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Portfolio Chat */}
-      <div style={{ height: "350px", marginTop: "auto" }}>
-        <ChatWidget title="Portfolio Analysis Chat" />
-      </div>
-
       {showUpload && (
         <UploadModal onClose={() => setShowUpload(false)} onSuccess={() => { setShowUpload(false); fetchCompanies(); }} />
       )}
+      <FloatingChatWidget title="Portfolio Analysis Chat" />
     </div>
   );
 }

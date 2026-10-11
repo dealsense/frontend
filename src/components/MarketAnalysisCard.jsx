@@ -1,29 +1,53 @@
 "use client";
-import { marketSize } from "@/lib/format";
+import { marketSize, compact } from "@/lib/format";
+
+// Deck-extracted TAM/SAM/SOM text is a full sentence ("Indian Luxury Market is
+// expected to reach Rs. 82,186 crore by 2027..."), not just a number — bolding
+// the whole thing made it unreadable. Pull out the figure as a standalone headline
+// and keep the sentence as smaller supporting detail underneath.
+const _NUMBER_RE = /(₹|Rs\.?|\$)\s?[\d,]+(?:\.\d+)?\s?(?:crore|cr\.?|lakh|lac|billion|bn|million|mn|b|m|k|%)?|\b\d+(?:\.\d+)?\s?(?:crore|cr\.?|lakh|lac|billion|bn|million|mn|x|%)\b/gi;
+
+function _headlineFigure(text, value) {
+  if (text) {
+    const m = text.match(_NUMBER_RE);
+    if (m) return m[0];
+  }
+  if (value != null) return compact(value);
+  return null;
+}
 
 function DeckMarket({ m }) {
   const sizes = [
-    { label: "Total Addressable Market", text: m.tam_text, value: m.tam_value },
-    { label: "Serviceable Addressable Market", text: m.sam_text, value: m.sam_value },
-    { label: "Serviceable Obtainable Market", text: m.som_text, value: m.som_value },
+    { key: "tam", label: "TAM", full: "Total Addressable Market", text: m.tam_text, value: m.tam_value },
+    { key: "sam", label: "SAM", full: "Serviceable Addressable Market", text: m.sam_text, value: m.sam_value },
+    { key: "som", label: "SOM", full: "Serviceable Obtainable Market", text: m.som_text, value: m.som_value },
   ].filter(s => s.text || s.value);
 
   return (
     <div className="space-y-4">
       {sizes.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {sizes.map((s, i) => (
-            <div key={i}>
-              <p className="text-xs font-semibold mb-1" style={{ color: "#9ca3af" }}>{s.label}</p>
-              <p className="text-lg font-bold text-white">{marketSize(s.text, s.value, "")}</p>
-            </div>
-          ))}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {sizes.map((s) => {
+            const headline = _headlineFigure(s.text, s.value);
+            const detail = marketSize(s.text, s.value, "");
+            return (
+              <div key={s.key} className="rounded-lg p-3.5" style={{ background: "var(--bg-card2)", border: "1px solid var(--border)" }}>
+                <p className="text-xs font-bold font-mono mb-1.5 cursor-help" title={s.full} style={{ color: "var(--green)" }}>{s.label}</p>
+                {headline && (
+                  <p className="text-xl font-black mb-1.5" style={{ color: "var(--green)" }}>{headline}</p>
+                )}
+                {detail && detail !== headline && (
+                  <p className="text-xs leading-relaxed" style={{ color: "#6b7280" }}>{detail}</p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
       {m.market_cagr_text && (
-        <div>
-          <p className="text-xs font-semibold mb-1" style={{ color: "#9ca3af" }}>Growth</p>
-          <p className="text-sm" style={{ color: "white" }}>{m.market_cagr_text}</p>
+        <div className="flex items-center gap-2 px-3.5 py-2 rounded-lg" style={{ background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.2)" }}>
+          <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#60a5fa" }}>Growth</span>
+          <span className="text-sm" style={{ color: "white" }}>{m.market_cagr_text}</span>
         </div>
       )}
       {m.positioning_summary && (
@@ -33,17 +57,17 @@ function DeckMarket({ m }) {
         </div>
       )}
       {(m.key_drivers || m.key_trends) && (
-        <div className="pt-3 space-y-2" style={{ borderTop: "1px solid var(--border)" }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
           {m.key_drivers && (
-            <div className="flex gap-2 text-xs">
-              <span className="shrink-0" style={{ color: "var(--green)" }}>›</span>
-              <span style={{ color: "#9ca3af" }}><strong style={{ color: "white" }}>Drivers: </strong>{m.key_drivers}</span>
+            <div>
+              <p className="text-xs font-bold mb-1" style={{ color: "var(--green)" }}>Drivers</p>
+              <p className="text-xs leading-relaxed" style={{ color: "#9ca3af" }}>{m.key_drivers}</p>
             </div>
           )}
           {m.key_trends && (
-            <div className="flex gap-2 text-xs">
-              <span className="shrink-0" style={{ color: "var(--blue)" }}>›</span>
-              <span style={{ color: "#9ca3af" }}><strong style={{ color: "white" }}>Trends: </strong>{m.key_trends}</span>
+            <div>
+              <p className="text-xs font-bold mb-1" style={{ color: "#60a5fa" }}>Trends</p>
+              <p className="text-xs leading-relaxed" style={{ color: "#9ca3af" }}>{m.key_trends}</p>
             </div>
           )}
         </div>
