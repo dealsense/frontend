@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import AnimatedGraphBackground from "@/components/AnimatedGraphBackground";
+// vercel-connect-test marker — safe to remove once auto-deploy is confirmed
 
 export default function LoginPage() {
   const router = useRouter();
@@ -47,6 +49,9 @@ export default function LoginPage() {
       {/* Background glow effects */}
       <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full opacity-10 blur-[130px] pointer-events-none" style={{ background: "var(--green)" }} />
       <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full opacity-[0.07] blur-[120px] pointer-events-none" style={{ background: "var(--blue)" }} />
+
+      {/* Live moving line-graph motion background */}
+      <AnimatedGraphBackground />
 
       <div className="w-full max-w-md relative z-10">
         {/* Brand logo & tagline */}
