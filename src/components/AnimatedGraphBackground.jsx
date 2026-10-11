@@ -2,16 +2,13 @@
 
 import { useEffect, useRef } from "react";
 
-// A few independent "ticker" lines drifting left-to-right, each a random walk
-// smoothed with a sine wobble so they read as organic chart motion rather than noise.
-const LINES = [
-  { color: "rgba(61, 220, 132, 0.28)", width: 1.6, speed: 0.55, amp: 26, baseY: 0.32, volatility: 0.9 },
-  { color: "rgba(61, 220, 132, 0.14)", width: 1.2, speed: 0.35, amp: 34, baseY: 0.58, volatility: 1.2 },
-  { color: "rgba(148, 197, 255, 0.16)", width: 1.2, speed: 0.42, amp: 30, baseY: 0.74, volatility: 1.0 },
-  { color: "rgba(255, 255, 255, 0.07)", width: 1, speed: 0.28, amp: 20, baseY: 0.46, volatility: 0.7 },
-];
-
-const POINT_SPACING = 14;
+// Dense node/edge network — nodes drift slowly, edges fade in between nearby
+// ones. Deliberately light/low-opacity so it reads as texture, not noise.
+const NODE_COLOR = "rgba(61, 220, 132, 0.55)";
+const EDGE_COLOR = "61, 220, 132";
+const MAX_EDGE_DIST = 150;
+const NODE_SPEED = 0.18;
+const AREA_PER_NODE = 11000; // lower = denser
 
 export default function AnimatedGraphBackground() {
   const canvasRef = useRef(null);
@@ -23,8 +20,19 @@ export default function AnimatedGraphBackground() {
     let width = 0;
     let height = 0;
     let dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    let nodes = [];
 
-    const series = LINES.map((line) => ({ ...line, values: [], seed: Math.random() * 1000 }));
+    function makeNodes() {
+      const count = Math.max(40, Math.floor((width * height) / AREA_PER_NODE));
+      nodes = new Array(count).fill(0).map(() => ({
+        x: Math.random() * width,
+        y: Math.random() * height,
+        vx: (Math.random() - 0.5) * NODE_SPEED,
+        vy: (Math.random() - 0.5) * NODE_SPEED,
+        r: 1.2 + Math.random() * 1.6,
+        phase: Math.random() * Math.PI * 2,
+      }));
+    }
 
     function resize() {
       width = canvas.offsetWidth;
@@ -32,50 +40,64 @@ export default function AnimatedGraphBackground() {
       canvas.width = width * dpr;
       canvas.height = height * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      const pointCount = Math.ceil(width / POINT_SPACING) + 4;
-      series.forEach((s) => {
-        s.values = new Array(pointCount).fill(0).map((_, i) =>
-          Math.sin(i * 0.25 + s.seed) * s.amp * 0.4
-        );
-      });
+      makeNodes();
     }
 
     function step(t) {
       ctx.clearRect(0, 0, width, height);
 
-      series.forEach((s) => {
-        // Drift a new value in from the right every so often, random-walked off the last one.
-        const last = s.values[s.values.length - 1] || 0;
-        const wobble = Math.sin(t * 0.0002 * s.speed + s.seed) * s.amp * 0.5;
-        const drift = (Math.random() - 0.5) * s.volatility * 10;
-        let next = last * 0.9 + wobble * 0.15 + drift * 0.15;
-        next = Math.max(-s.amp, Math.min(s.amp, next));
+      // Move + wrap nodes
+      nodes.forEach((n) => {
+        n.x += n.vx;
+        n.y += n.vy;
+        if (n.x < -20) n.x = width + 20;
+        if (n.x > width + 20) n.x = -20;
+        if (n.y < -20) n.y = height + 20;
+        if (n.y > height + 20) n.y = -20;
+      });
 
-        if (t % (40 / s.speed) < 16) {
-          s.values.push(next);
-          s.values.shift();
+      // Edges — only check nearby nodes via a coarse grid bucket for perf
+      const cell = MAX_EDGE_DIST;
+      const buckets = new Map();
+      nodes.forEach((n, i) => {
+        const key = `${Math.floor(n.x / cell)}:${Math.floor(n.y / cell)}`;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(i);
+      });
+
+      ctx.lineWidth = 1;
+      nodes.forEach((n, i) => {
+        const cx = Math.floor(n.x / cell);
+        const cy = Math.floor(n.y / cell);
+        for (let gx = cx - 1; gx <= cx + 1; gx++) {
+          for (let gy = cy - 1; gy <= cy + 1; gy++) {
+            const neighbors = buckets.get(`${gx}:${gy}`);
+            if (!neighbors) continue;
+            neighbors.forEach((j) => {
+              if (j <= i) return;
+              const m = nodes[j];
+              const dx = n.x - m.x;
+              const dy = n.y - m.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < MAX_EDGE_DIST) {
+                const opacity = (1 - dist / MAX_EDGE_DIST) * 0.35;
+                ctx.strokeStyle = `rgba(${EDGE_COLOR}, ${opacity})`;
+                ctx.beginPath();
+                ctx.moveTo(n.x, n.y);
+                ctx.lineTo(m.x, m.y);
+                ctx.stroke();
+              }
+            });
+          }
         }
+      });
 
+      // Nodes, with a gentle pulse
+      nodes.forEach((n) => {
+        const pulse = n.r + Math.sin(t * 0.0015 + n.phase) * 0.5;
         ctx.beginPath();
-        ctx.strokeStyle = s.color;
-        ctx.lineWidth = s.width;
-        ctx.lineJoin = "round";
-        s.values.forEach((v, i) => {
-          const x = i * POINT_SPACING;
-          const y = height * s.baseY + v;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-
-        // Soft pulsing head dot at the leading edge.
-        const headX = (s.values.length - 1) * POINT_SPACING;
-        const headY = height * s.baseY + s.values[s.values.length - 1];
-        const pulse = 2.2 + Math.sin(t * 0.004 + s.seed) * 1.1;
-        ctx.beginPath();
-        ctx.fillStyle = s.color;
-        ctx.arc(headX, headY, pulse, 0, Math.PI * 2);
+        ctx.fillStyle = NODE_COLOR;
+        ctx.arc(n.x, n.y, Math.max(0.6, pulse), 0, Math.PI * 2);
         ctx.fill();
       });
 
@@ -96,7 +118,7 @@ export default function AnimatedGraphBackground() {
     <canvas
       ref={canvasRef}
       className="absolute inset-0 w-full h-full pointer-events-none"
-      style={{ opacity: 0.9 }}
+      style={{ opacity: 0.85 }}
       aria-hidden="true"
     />
   );
